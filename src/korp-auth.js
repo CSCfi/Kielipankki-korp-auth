@@ -83,6 +83,116 @@ app.use(sessionMiddleware);
 
 const fallback_redirect_uri = config.fallbackRedirectUri;
 
+// OIDC client (initialized on startup if authMode is 'oidc')
+let oidcClient = null;
+
+// Initialize OIDC client if in OIDC mode
+if (config.authMode === 'oidc') {
+  const oidc = require('./auth/oidc');
+
+  oidc.initializeOIDCClient().then((client) => {
+    oidcClient = client;
+    console.log('[OIDC] Client ready for authentication');
+  }).catch((error) => {
+    console.error('[OIDC] Failed to initialize client:', error);
+    console.error('[OIDC] OIDC authentication will not be available');
+  });
+}
+
+// OIDC Routes (only active when authMode === 'oidc')
+
+/**
+ * GET /auth/login
+ * Initiates OIDC authentication flow by redirecting to the IdP
+ */
+app.get('/auth/login', (req, res) => {
+  if (config.authMode !== 'oidc') {
+    return res.status(501).json({ error: 'OIDC not enabled. Set AUTH_MODE=oidc' });
+  }
+
+  if (!oidcClient) {
+    return res.status(503).json({ error: 'OIDC client not initialized' });
+  }
+
+  const oidc = require('./auth/oidc');
+
+  // Generate state and nonce for security
+  const state = oidc.generateState();
+  const nonce = oidc.generateNonce();
+
+  // Store in session for validation on callback
+  req.session.oidc = {
+    state: state,
+    nonce: nonce,
+    returnTo: req.query.returnTo || '/jwt', // Where to go after successful auth
+  };
+
+  // Get authorization URL and redirect
+  const authUrl = oidc.getAuthorizationUrl(state, nonce);
+
+  console.log('[OIDC] Redirecting to IdP for authentication');
+  res.redirect(authUrl);
+});
+
+/**
+ * GET /auth/callback
+ * OIDC callback endpoint - exchanges authorization code for tokens
+ */
+app.get('/auth/callback', async (req, res) => {
+  if (config.authMode !== 'oidc') {
+    return res.status(501).json({ error: 'OIDC not enabled' });
+  }
+
+  if (!oidcClient) {
+    return res.status(503).json({ error: 'OIDC client not initialized' });
+  }
+
+  const oidc = require('./auth/oidc');
+
+  try {
+    // Get code and state from query params
+    const { code, state } = req.query;
+
+    if (!code || !state) {
+      return res.status(400).json({ error: 'Missing code or state parameter' });
+    }
+
+    // Verify state matches what we sent
+    const sessionOidc = req.session.oidc;
+    if (!sessionOidc || sessionOidc.state !== state) {
+      return res.status(400).json({ error: 'Invalid state parameter (CSRF protection)' });
+    }
+
+    // Exchange authorization code for tokens
+    console.log('[OIDC] Exchanging authorization code for tokens');
+    const tokenSet = await oidc.exchangeCodeForTokens(code, state, sessionOidc.nonce);
+
+    // Extract user info from ID token
+    const userInfo = oidc.getUserInfo(tokenSet);
+
+    console.log('[OIDC] User authenticated:', userInfo.email || userInfo.sub);
+
+    // Store tokens and user info in session
+    req.session.oidc = {
+      user: userInfo,
+      tokens: {
+        id_token: tokenSet.id_token,
+        access_token: tokenSet.access_token,
+        refresh_token: tokenSet.refresh_token,
+        expires_at: tokenSet.expires_at,
+      },
+    };
+
+    // Redirect to where the user wanted to go
+    const returnTo = sessionOidc.returnTo || '/jwt';
+    res.redirect(returnTo);
+
+  } catch (error) {
+    console.error('[OIDC] Callback error:', error.message);
+    res.status(500).json({ error: 'Authentication failed', details: error.message });
+  }
+});
+
 // Serve login page
 app.get('/login', (req, res) => {
   const { redirect, client_id, state, destination } = req.query;
