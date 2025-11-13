@@ -61,19 +61,94 @@ function requireProxyAuth(req, res, next) {
 }
 
 // ============================================================================
-// DEVELOPMENT MODE ENDPOINTS (AUTH_MODE=local)
-// These endpoints are ONLY for local development without Apache
+// LOGIN ENDPOINT (Available in both modes)
 // ============================================================================
 
-// Serve login page (local mode only)
+/**
+ * GET /login
+ *
+ * Proxy mode: Triggers OIDC authentication and redirects with JWT
+ * Local mode: Shows login form
+ */
 app.get('/login', (req, res) => {
+  // PROXY MODE: Act like /jwt endpoint with redirect
   if (config.authMode === 'proxy') {
-    return res.status(404).json({
-      error: 'Not available in proxy mode',
-      message: 'Authentication is handled by Apache. This endpoint is only for local development.'
-    });
+    const remoteUser = req.headers['remote-user'];
+    const mail = req.headers['mail'];
+    const displayName = req.headers['displayname'];
+
+    if (!remoteUser) {
+      return res.status(401).json({
+        error: 'Unauthorized',
+        message: 'No user identity from proxy. Ensure Apache mod_auth_openidc is configured and user is authenticated.'
+      });
+    }
+
+    // User is authenticated - generate JWT and redirect
+    const userSub = remoteUser;
+    const userEmail = mail || null;
+    const userName = displayName || mail || remoteUser;
+
+    console.log(`[Proxy/Login] Issuing JWT for user: ${userEmail || userSub}`);
+
+    const scope = auth_db.get_user_scope(userSub);
+
+    const token = jwt.sign(
+      {
+        sub: userSub,
+        email: userEmail,
+        name: userName,
+        idp: 'https://aai.kielipankki.fi',
+        scope: scope,
+        levels: auth_db.PERMISSIONS,
+        exp: Math.floor(Date.now() / 1000) + 3600,
+        iat: Math.floor(Date.now() / 1000)
+      },
+      JWT_SECRET,
+      { algorithm: 'RS256' }
+    );
+
+    // Check for redirect parameter
+    const redirectTo = req.query.redirect || req.query.redirect_uri;
+
+    if (redirectTo) {
+      // Validate redirect URL
+      try {
+        const redirectUrl = new URL(redirectTo);
+        const allowedOrigins = [
+          'https://www.kielipankki.fi',
+          'https://kielipankki.fi',
+        ];
+
+        const isAllowed = allowedOrigins.some(origin =>
+          redirectUrl.origin === origin || redirectUrl.href.startsWith(origin)
+        );
+
+        if (!isAllowed) {
+          console.warn(`[Login] Rejected redirect to untrusted origin: ${redirectUrl.origin}`);
+          return res.status(400).json({
+            error: 'Invalid redirect URL',
+            message: 'Redirect destination is not in the allowed list'
+          });
+        }
+
+        const separator = redirectUrl.search ? '&' : '?';
+        return res.redirect(`${redirectTo}${separator}jwt=${token}`);
+
+      } catch (error) {
+        console.warn(`[Login] Invalid redirect URL: ${redirectTo}`);
+        return res.status(400).json({
+          error: 'Invalid redirect URL',
+          message: 'Malformed URL'
+        });
+      }
+    }
+
+    // No redirect: return JWT as text
+    return res.send(token);
   }
 
+  // LOCAL MODE: Show login form
   const { redirect, client_id, state, destination } = req.query;
   const finalRedirectUri = redirect || fallback_redirect_uri;
 
@@ -112,6 +187,10 @@ app.get('/login', (req, res) => {
     </html>
   `);
 });
+
+// ============================================================================
+// DEVELOPMENT MODE ENDPOINTS (AUTH_MODE=local)
+// ============================================================================
 
 // Handle login form submission (local mode only)
 app.post('/auth', (req, res) => {
