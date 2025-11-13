@@ -27,45 +27,14 @@ const config = {
   // Environment
   nodeEnv: process.env.NODE_ENV || 'development',
 
-  // Cookie configuration
-  authCookieName: process.env.AUTH_COOKIE_NAME || 'kp-future-auth-token',
-
-  // Redirect configuration
-  fallbackRedirectUri: process.env.FALLBACK_REDIRECT_URI || 'https://www.kielipankki.fi',
-
   // Authentication mode
-  authMode: process.env.AUTH_MODE || 'local', // 'local' | 'oidc'
+  // 'local' = development mode with login page and demo users
+  // 'proxy' = production mode, reads user identity from Apache headers
+  authMode: process.env.AUTH_MODE || 'local',
 
-  // Session configuration
-  session: {
-    secret: process.env.SESSION_SECRET || 'change-this-in-production-' + Math.random().toString(36),
-    name: process.env.SESSION_COOKIE_NAME || 'korp-auth-session',
-    maxAge: parseInt(process.env.SESSION_MAX_AGE || '86400000', 10), // 24 hours default
-    // Redis configuration
-    redis: {
-      host: process.env.REDIS_HOST || '127.0.0.1',
-      port: parseInt(process.env.REDIS_PORT || '6379', 10),
-      password: process.env.REDIS_PASSWORD || undefined,
-      db: parseInt(process.env.REDIS_DB || '0', 10),
-      keyPrefix: process.env.REDIS_KEY_PREFIX || 'korp-auth:sess:'
-    }
-  },
-
-  // OIDC configuration (Kielipankki AAI - Shibboleth OIDC OP)
-  oidc: {
-    issuerUrl: process.env.OIDC_ISSUER_URL || 'https://aai.kielipankki.fi',
-    clientId: process.env.OIDC_CLIENT_ID || '',
-    clientSecret: process.env.OIDC_CLIENT_SECRET || '',
-    redirectUri: process.env.OIDC_REDIRECT_URI || '',
-    scope: process.env.OIDC_SCOPE || 'openid profile email',
-    postLogoutRedirectUri: process.env.OIDC_POST_LOGOUT_REDIRECT_URI || '',
-
-    // Back-channel logout support
-    backChannelLogoutUri: process.env.OIDC_BACKCHANNEL_LOGOUT_URI || '',
-
-    // Optional: for dynamic client registration
-    dynamicRegistration: process.env.OIDC_DYNAMIC_REGISTRATION === 'true'
-  }
+  // Development mode only - cookie configuration
+  authCookieName: process.env.AUTH_COOKIE_NAME || 'kp-future-auth-token',
+  fallbackRedirectUri: process.env.FALLBACK_REDIRECT_URI || 'https://www.kielipankki.fi'
 };
 
 module.exports = config;

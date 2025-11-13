@@ -4,10 +4,6 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const cookieParser = require('cookie-parser');
-const sqlite = require('node:sqlite');
-const session = require('express-session');
-const RedisStore = require('connect-redis').default;
-const Redis = require('ioredis');
 const config = require('./config');
 
 const app = express();
@@ -22,7 +18,7 @@ const auth_cookie_name = config.authCookieName;
 const auth_db = require('./db.js');
 auth_db.create_db_if_missing();
 
-// In-memory token blacklist for logout functionality
+// In-memory token blacklist for logout functionality (local mode only)
 const blacklistedTokens = new Set();
 
 app.use(cors());
@@ -31,407 +27,303 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.static('public'));
 app.use(cookieParser());
 
-// Session middleware setup
-let sessionMiddleware;
-if (config.authMode === 'oidc') {
-  // Redis-backed sessions for OIDC mode
-  const redisClient = new Redis({
-    host: config.session.redis.host,
-    port: config.session.redis.port,
-    password: config.session.redis.password,
-    db: config.session.redis.db,
-  });
-
-  redisClient.on('error', (err) => {
-    console.error('[Redis] Connection error:', err);
-  });
-
-  redisClient.on('connect', () => {
-    console.log('[Redis] Connected successfully');
-  });
-
-  sessionMiddleware = session({
-    store: new RedisStore({ client: redisClient, prefix: config.session.redis.keyPrefix }),
-    secret: config.session.secret,
-    name: config.session.name,
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      secure: config.nodeEnv === 'production',
-      httpOnly: true,
-      sameSite: 'lax',
-      maxAge: config.session.maxAge,
-    },
-  });
-} else {
-  // Memory-backed sessions for local dev mode
-  sessionMiddleware = session({
-    secret: config.session.secret,
-    name: config.session.name,
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      secure: config.nodeEnv === 'production',
-      httpOnly: true,
-      sameSite: 'lax',
-      maxAge: config.session.maxAge,
-    },
-  });
-}
-
-app.use(sessionMiddleware);
-
 const fallback_redirect_uri = config.fallbackRedirectUri;
 
-// OIDC client (initialized on startup if authMode is 'oidc')
-let oidcClient = null;
-
-// Initialize OIDC client if in OIDC mode
-if (config.authMode === 'oidc') {
-  const oidc = require('./auth/oidc');
-
-  oidc.initializeOIDCClient().then((client) => {
-    oidcClient = client;
-    console.log('[OIDC] Client ready for authentication');
-  }).catch((error) => {
-    console.error('[OIDC] Failed to initialize client:', error);
-    console.error('[OIDC] OIDC authentication will not be available');
-  });
-}
-
-// OIDC Routes (only active when authMode === 'oidc')
-
 /**
- * GET /auth/login
- * Initiates OIDC authentication flow by redirecting to the IdP
+ * Middleware: Extract user identity from Apache headers (proxy mode)
+ * or reject if headers are missing
  */
-app.get('/auth/login', (req, res) => {
-  if (config.authMode !== 'oidc') {
-    return res.status(501).json({ error: 'OIDC not enabled. Set AUTH_MODE=oidc' });
+function requireProxyAuth(req, res, next) {
+  if (config.authMode !== 'proxy') {
+    return next(); // Not in proxy mode, skip
   }
 
-  if (!oidcClient) {
-    return res.status(503).json({ error: 'OIDC client not initialized' });
+  // Apache sets these headers from OIDC claims
+  const remoteUser = req.headers['remote-user'];  // OIDC sub
+  const mail = req.headers['mail'];               // Email
+  const displayName = req.headers['displayname']; // Display name
+
+  if (!remoteUser) {
+    return res.status(401).json({
+      error: 'Unauthorized',
+      message: 'No user identity from proxy. Ensure Apache mod_auth_openidc is configured.'
+    });
   }
 
-  const oidc = require('./auth/oidc');
-
-  // Generate state and nonce for security
-  const state = oidc.generateState();
-  const nonce = oidc.generateNonce();
-
-  // Store in session for validation on callback
-  req.session.oidc = {
-    state: state,
-    nonce: nonce,
-    returnTo: req.query.returnTo || '/jwt', // Where to go after successful auth
+  // Attach user info to request
+  req.user = {
+    sub: remoteUser,
+    email: mail || null,
+    name: displayName || mail || remoteUser
   };
 
-  // Get authorization URL and redirect
-  const authUrl = oidc.getAuthorizationUrl(state, nonce);
+  next();
+}
 
-  console.log('[OIDC] Redirecting to IdP for authentication');
-  res.redirect(authUrl);
-});
+// ============================================================================
+// DEVELOPMENT MODE ENDPOINTS (AUTH_MODE=local)
+// These endpoints are ONLY for local development without Apache
+// ============================================================================
 
-/**
- * GET /auth/callback
- * OIDC callback endpoint - exchanges authorization code for tokens
- */
-app.get('/auth/callback', async (req, res) => {
-  if (config.authMode !== 'oidc') {
-    return res.status(501).json({ error: 'OIDC not enabled' });
-  }
-
-  if (!oidcClient) {
-    return res.status(503).json({ error: 'OIDC client not initialized' });
-  }
-
-  const oidc = require('./auth/oidc');
-
-  try {
-    // Get code and state from query params
-    const { code, state } = req.query;
-
-    if (!code || !state) {
-      return res.status(400).json({ error: 'Missing code or state parameter' });
-    }
-
-    // Verify state matches what we sent
-    const sessionOidc = req.session.oidc;
-    if (!sessionOidc || sessionOidc.state !== state) {
-      return res.status(400).json({ error: 'Invalid state parameter (CSRF protection)' });
-    }
-
-    // Exchange authorization code for tokens
-    console.log('[OIDC] Exchanging authorization code for tokens');
-    const tokenSet = await oidc.exchangeCodeForTokens(code, state, sessionOidc.nonce);
-
-    // Extract user info from ID token
-    const userInfo = oidc.getUserInfo(tokenSet);
-
-    console.log('[OIDC] User authenticated:', userInfo.email || userInfo.sub);
-
-    // Store tokens and user info in session
-    req.session.oidc = {
-      user: userInfo,
-      tokens: {
-        id_token: tokenSet.id_token,
-        access_token: tokenSet.access_token,
-        refresh_token: tokenSet.refresh_token,
-        expires_at: tokenSet.expires_at,
-      },
-    };
-
-    // Redirect to where the user wanted to go
-    const returnTo = sessionOidc.returnTo || '/jwt';
-    res.redirect(returnTo);
-
-  } catch (error) {
-    console.error('[OIDC] Callback error:', error.message);
-    res.status(500).json({ error: 'Authentication failed', details: error.message });
-  }
-});
-
-// Serve login page
+// Serve login page (local mode only)
 app.get('/login', (req, res) => {
+  if (config.authMode === 'proxy') {
+    return res.status(404).json({
+      error: 'Not available in proxy mode',
+      message: 'Authentication is handled by Apache. This endpoint is only for local development.'
+    });
+  }
+
   const { redirect, client_id, state, destination } = req.query;
-  
-  // Use destination if provided, otherwise fall back to redirect_uri
-    const finalRedirectUri = redirect || fallback_redirect_uri;
-  
+  const finalRedirectUri = redirect || fallback_redirect_uri;
+
   res.send(`
     <!DOCTYPE html>
     <html>
     <head>
-        <title>KP-future login</title>
+        <title>KP Auth - Development Login</title>
         <style>
             body { font-family: Arial, sans-serif; max-width: 400px; margin: 100px auto; padding: 20px; }
             .login-form { border: 1px solid #ddd; padding: 30px; border-radius: 8px; }
+            .dev-notice { background: #fff3cd; border: 1px solid #ffc107; padding: 10px; margin-bottom: 20px; border-radius: 4px; }
             input { width: 100%; padding: 10px; margin: 10px 0; box-sizing: border-box; }
             button { background: #007bff; color: white; padding: 12px 20px; border: none; border-radius: 4px; cursor: pointer; width: 100%; }
             button:hover { background: #0056b3; }
-            .demo-users { margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 4px; font-size: 12px; }
         </style>
     </head>
     <body>
         <div class="login-form">
-            <h2>KP-future login</h2>
+            <div class="dev-notice">
+                <strong>⚠️ Development Mode</strong><br>
+                In production, authentication is handled by Apache.
+            </div>
+            <h2>Login</h2>
             <form action="auth" method="post">
                 <input type="hidden" name="redirect_uri" value="${finalRedirectUri || ''}" />
                 <input type="hidden" name="client_id" value="${client_id || ''}" />
                 <input type="hidden" name="state" value="${state || ''}" />
-                
+
                 <input type="email" name="username" placeholder="Email" required />
                 <input type="password" name="password" placeholder="Password" required />
                 <button type="submit">Login</button>
             </form>
-            
         </div>
     </body>
     </html>
   `);
 });
 
-// Handle login form submission
+// Handle login form submission (local mode only)
 app.post('/auth', (req, res) => {
+  if (config.authMode === 'proxy') {
+    return res.status(404).json({
+      error: 'Not available in proxy mode',
+      message: 'Authentication is handled by Apache.'
+    });
+  }
+
   const { username, password, redirect_uri } = req.body;
-  
-    // Validate credentials
-    if (!auth_db.user_exists(username) || auth_db.get_user_password(username) !== password) {
+
+  // Validate credentials
+  if (!auth_db.user_exists(username) || auth_db.get_user_password(username) !== password) {
     return res.status(401).send(`
       <h2>Login Failed</h2>
       <p>Invalid credentials. <a href="login?redirect_uri=${redirect_uri}">Try again</a></p>
     `);
   }
-    
-    const authCode = jwt.sign({ username, timestamp: Date.now() }, JWT_SECRET, { expiresIn: '10m', algorithm: 'RS256' });
-    
-    res.cookie(auth_cookie_name,
-               authCode, { httpOnly: false,
-                           secure: true,     // HTTPS must be enabled
-                           sameSite: 'lax',  // CSRF protection
-                           maxAge: 3600000,  // 1 hour in milliseconds
-                           path: '/'         // Available on all paths
-                         });
-    
-    if (redirect_uri) {
-        res.redirect(redirect_uri);
-    }  else {
-        // Or show some error instead?
-        res.json({ code: authCode });
-    }
-});
 
-app.get('/jwt', (req, res) => {
-    // OIDC mode: Check for OIDC session
-    if (config.authMode === 'oidc') {
-        // Check if user has an OIDC session
-        if (!req.session.oidc || !req.session.oidc.user) {
-            // No OIDC session - redirect to login
-            console.log('[OIDC] No session found, redirecting to login');
-            return res.redirect('/auth/login?returnTo=/jwt');
-        }
+  const authCode = jwt.sign({ username, timestamp: Date.now() }, JWT_SECRET, { expiresIn: '10m', algorithm: 'RS256' });
 
-        const userInfo = req.session.oidc.user;
+  res.cookie(auth_cookie_name,
+             authCode, { httpOnly: false,
+                         secure: false,     // Allow HTTP in dev mode
+                         sameSite: 'lax',   // CSRF protection
+                         maxAge: 3600000,   // 1 hour in milliseconds
+                         path: '/'          // Available on all paths
+                       });
 
-        console.log('[OIDC] Issuing JWT for user:', userInfo.email || userInfo.sub);
-
-        // Create and return JWT with user info from OIDC
-        // For now, we don't look up grants - just issue a minimal JWT
-        const token = jwt.sign(
-            {
-                sub: userInfo.sub,
-                email: userInfo.email || null,
-                name: userInfo.name || userInfo.email || userInfo.sub,
-                idp: config.oidc.issuerUrl,
-                scope: {}, // Empty scope for now - no grants lookup
-                levels: auth_db.PERMISSIONS,
-                iss: 'korp-auth',
-                exp: Math.floor(Date.now() / 1000) + 3600, // 1 hour
-                iat: Math.floor(Date.now() / 1000),
-            },
-            JWT_SECRET,
-            { algorithm: 'RS256' }
-        );
-
-        return res.send(token);
-    }
-
-    // Local mode: Use cookie-based auth (existing behavior)
-    const sessionToken = req.cookies[auth_cookie_name];
-
-    if (!sessionToken) {
-        return res.status(401).json({ error: 'unauthorized' });
-    }
-
-    if (blacklistedTokens.has(sessionToken)) {
-        return res.status(401).json({ error: 'token_revoked' });
-    }
-
-    try {
-        const decoded = jwt.verify(sessionToken, JWT_SECRET);
-        const username = decoded.username;
-        // If the auth cookie was good, renew it
-        const authCode = jwt.sign({ username, timestamp: Date.now() }, JWT_SECRET, { expiresIn: '10m', algorithm: 'RS256' });
-        res.cookie(auth_cookie_name,
-                   authCode, { httpOnly: false,
-                               secure: true,
-                               sameSite: 'lax',
-                               maxAge: 3600000,
-                               path: '/'
-                             });
-        // Create and return JWT
-        const token = jwt.sign(
-            {
-                email: username,
-                name: username, // We could get these from the db, but let's wait for kp-aai
-                exp: Math.floor(Date.now() / 1000) + 3600,
-                scope: auth_db.get_user_scope(username),
-                levels: auth_db.PERMISSIONS,
-                sub: username,
-                idp: "kp-future-auth"
-            },
-            JWT_SECRET,
-            {algorithm: 'RS256'});
-        res.send(token);
-
-    } catch (error) {
-        // Token invalid/expired, clear the cookie
-        res.clearCookie(auth_cookie_name);
-        res.status(401).json({ error: 'unauthorized' });
-    }
-});
-
-// The /resource endpoint used by Mink for creating
-app.post('/resource/:resourcename', (req, res) => {
-    const authCode = req.body.jwt;
-    if (!authCode) {
-        return res.status(401).json({ error: 'unauthorized' });
-    }
-    
-    try {
-        const decoded = jwt.verify(authCode, JWT_SECRET);
-        const username = decoded.email;
-        const resourcename = req.params.resourcename;
-        auth_db.create_resource(resourcename, "corpus");
-        auth_db.set_grant(username, resourcename, auth_db.PERMISSIONS.ADMIN);
-        res.status(201).send(resourcename);
-    } catch (error) {
-        if (error instanceof auth_db.ResourceExistsError) {
-            return res.status(400).json({ error: 'resource already exists'});
-        } else {
-            // TODO we could handle more possibilities
-            console.log("Returning 401 due to invalid auth token")
-            return res.status(401).json({ error: 'invalid auth token' });
-        }
-    }
-});
-
-// Deleting a resource
-app.delete('/resource/:resourcename', (req, res) => {
-    const authHeader = req.headers.authorization;
-    const resourcename = req.params.resourcename;
-
-    if (authHeader !== "apikey " + API_KEY) {
-        return res.status(401).json({ error: 'unauthorized' });
-    }
-    auth_db.delete_resource(resourcename);
-    // Even if it didn't exist we're happy
-    return res.status(204).send(resourcename);
-});
-
-app.get('/logout', (req, res) => {
-    const redirect_uri = req.query.redirect_uri
-    const sessionToken = req.cookies[auth_cookie_name];
-    if (sessionToken) {
-        // Clean up old tokens (TODO: use eg. Redis with TTL)
-        if (blacklistedTokens.size > 1000) {
-            // TODO: only clean up expired tokens
-            blacklistedTokens.clear();
-        }
-        // Add token to blacklist
-        blacklistedTokens.add(sessionToken);
-    }
-    
-    if (redirect_uri) {
-        res.redirect(redirect_uri);
-  } else {
-      res.json({ message: 'Logged out successfully' });
+  if (redirect_uri) {
+      res.redirect(redirect_uri);
+  }  else {
+      res.json({ code: authCode });
   }
 });
 
-// Health check / discovery endpoint - for later
-// app.get('/.well-known/openid_configuration', (req, res) => {
-//   // For Unix socket, you'll need to configure your reverse proxy/web server
-//   // to provide the external base URL. For now, using a placeholder.
-//   const baseUrl = process.env.BASE_URL || 'http://localhost';
-//   res.json({
-//     issuer: baseUrl,
-//     authorization_endpoint: `${baseUrl}/login`,
-//     token_endpoint: `${baseUrl}/token`,
-//     userinfo_endpoint: `${baseUrl}/userinfo`,
-//     end_session_endpoint: `${baseUrl}/logout`,
-//     jwks_uri: `${baseUrl}/jwks`,
-//     response_types_supported: ['code'],
-//     grant_types_supported: ['authorization_code'],
-//     subject_types_supported: ['public']
-//   });
-// });
+// Logout (local mode only)
+app.get('/logout', (req, res) => {
+  if (config.authMode === 'proxy') {
+    return res.status(404).json({
+      error: 'Not available in proxy mode',
+      message: 'Logout is handled by Apache.'
+    });
+  }
 
-// JWKS endpoint (simplified - for token verification)
-// app.get('/jwks', (req, res) => {
-//   res.json({
-//     keys: [
-//       {
-//         kty: 'oct',
-//         use: 'sig',
-//         alg: 'HS256',
-//         k: Buffer.from(JWT_SECRET).toString('base64url')
-//       }
-//     ]
-//   });
-// });
+  const redirect_uri = req.query.redirect_uri;
+  const sessionToken = req.cookies[auth_cookie_name];
+
+  if (sessionToken) {
+    // Clean up old tokens
+    if (blacklistedTokens.size > 1000) {
+      blacklistedTokens.clear();
+    }
+    blacklistedTokens.add(sessionToken);
+  }
+
+  res.clearCookie(auth_cookie_name);
+
+  if (redirect_uri) {
+    res.redirect(redirect_uri);
+  } else {
+    res.json({ message: 'Logged out successfully' });
+  }
+});
+
+// ============================================================================
+// PRODUCTION ENDPOINTS (Available in all modes)
+// ============================================================================
+
+/**
+ * GET /jwt
+ * Returns a JWT with user identity + resource permissions
+ *
+ * Proxy mode: Reads user from Apache headers
+ * Local mode: Reads user from session cookie
+ */
+app.get('/jwt', (req, res) => {
+  let userSub, userEmail, userName;
+
+  // PROXY MODE: Read user from Apache headers
+  if (config.authMode === 'proxy') {
+    const remoteUser = req.headers['remote-user'];
+    const mail = req.headers['mail'];
+    const displayName = req.headers['displayname'];
+
+    if (!remoteUser) {
+      return res.status(401).json({
+        error: 'Unauthorized',
+        message: 'No user identity from proxy. Ensure Apache mod_auth_openidc is configured and user is authenticated.'
+      });
+    }
+
+    userSub = remoteUser;
+    userEmail = mail || null;
+    userName = displayName || mail || remoteUser;
+
+    console.log(`[Proxy] Issuing JWT for user: ${userEmail || userSub}`);
+  }
+  // LOCAL MODE: Read user from cookie
+  else {
+    const sessionToken = req.cookies[auth_cookie_name];
+
+    if (!sessionToken) {
+      return res.status(401).json({ error: 'unauthorized', message: 'No session cookie found' });
+    }
+
+    if (blacklistedTokens.has(sessionToken)) {
+      return res.status(401).json({ error: 'token_revoked' });
+    }
+
+    try {
+      const decoded = jwt.verify(sessionToken, JWT_SECRET);
+      const username = decoded.username;
+
+      // Renew the auth cookie
+      const authCode = jwt.sign({ username, timestamp: Date.now() }, JWT_SECRET, { expiresIn: '10m', algorithm: 'RS256' });
+      res.cookie(auth_cookie_name,
+                 authCode, { httpOnly: false,
+                             secure: false,
+                             sameSite: 'lax',
+                             maxAge: 3600000,
+                             path: '/'
+                           });
+
+      userSub = username;
+      userEmail = username;
+      userName = username;
+
+      console.log(`[Local] Issuing JWT for user: ${username}`);
+    } catch (error) {
+      res.clearCookie(auth_cookie_name);
+      return res.status(401).json({ error: 'unauthorized', message: 'Invalid or expired session' });
+    }
+  }
+
+  // Look up user's resource permissions
+  const scope = auth_db.get_user_scope(userSub);
+
+  // Generate JWT with user identity + permissions
+  const token = jwt.sign(
+    {
+      sub: userSub,
+      email: userEmail,
+      name: userName,
+      idp: config.authMode === 'proxy' ? 'https://aai.kielipankki.fi' : 'kp-auth-local',
+      scope: scope,
+      levels: auth_db.PERMISSIONS,
+      exp: Math.floor(Date.now() / 1000) + 3600, // 1 hour
+      iat: Math.floor(Date.now() / 1000)
+    },
+    JWT_SECRET,
+    { algorithm: 'RS256' }
+  );
+
+  res.send(token);
+});
+
+/**
+ * POST /resource/:resourcename
+ * Create a new resource and grant the creator ADMIN permission
+ * Requires JWT authentication
+ */
+app.post('/resource/:resourcename', (req, res) => {
+  const authCode = req.body.jwt;
+  if (!authCode) {
+    return res.status(401).json({ error: 'unauthorized', message: 'JWT required in request body' });
+  }
+
+  try {
+    const decoded = jwt.verify(authCode, JWT_SECRET);
+    const username = decoded.sub || decoded.email;
+    const resourcename = req.params.resourcename;
+
+    auth_db.create_resource(resourcename, "corpus");
+    auth_db.set_grant(username, resourcename, auth_db.PERMISSIONS.ADMIN);
+
+    console.log(`[Resource] Created resource '${resourcename}' for user '${username}'`);
+    res.status(201).send(resourcename);
+  } catch (error) {
+    if (error instanceof auth_db.ResourceExistsError) {
+      return res.status(400).json({ error: 'resource already exists'});
+    } else {
+      console.log("Returning 401 due to invalid auth token:", error.message);
+      return res.status(401).json({ error: 'invalid auth token' });
+    }
+  }
+});
+
+/**
+ * DELETE /resource/:resourcename
+ * Delete a resource and all its grants
+ * Requires Mink API key (service-to-service authentication)
+ */
+app.delete('/resource/:resourcename', (req, res) => {
+  const authHeader = req.headers.authorization;
+  const resourcename = req.params.resourcename;
+
+  if (authHeader !== "apikey " + API_KEY) {
+    return res.status(401).json({ error: 'unauthorized', message: 'Valid API key required' });
+  }
+
+  auth_db.delete_resource(resourcename);
+  console.log(`[Resource] Deleted resource '${resourcename}'`);
+
+  // 204 No Content (even if it didn't exist)
+  return res.status(204).send();
+});
+
+// ============================================================================
+// SERVER STARTUP
+// ============================================================================
 
 // Clean up existing socket file if it exists
 if (fs.existsSync(SOCKET_PATH)) {
@@ -439,14 +331,34 @@ if (fs.existsSync(SOCKET_PATH)) {
 }
 
 app.listen(SOCKET_PATH, () => {
-  console.log(`Mink OAuth2 Server listening on Unix socket: ${SOCKET_PATH}`);
-  console.log(`You need configure a reverse proxy (nginx, Apache, etc.) to serve this.`);
-  console.log('\nDemo users:');
+  console.log('='.repeat(70));
+  console.log('Kielipankki Auth Service');
+  console.log('='.repeat(70));
+  console.log(`Mode:            ${config.authMode.toUpperCase()}`);
+  console.log(`Socket:          ${SOCKET_PATH}`);
+  console.log(`Database:        ${config.dbPath}`);
+  console.log(`JWT Key:         ${config.jwtPrivateKeyPath}`);
+  console.log('='.repeat(70));
+
+  if (config.authMode === 'local') {
+    console.log('\n⚠️  DEVELOPMENT MODE');
+    console.log('   Authentication endpoints available at /login, /auth, /logout');
+    console.log('\n   Demo users:');
     Object.keys(auth_db.demo_users).forEach(email => {
-        console.log(`  ${email} / ${auth_db.demo_users[email].password}`);
+      console.log(`     • ${email} / ${auth_db.demo_users[email].password}`);
     });
-  
-  // Set socket permissions (optional - adjust as needed)
+    console.log('\n   In production, set AUTH_MODE=proxy');
+  } else if (config.authMode === 'proxy') {
+    console.log('\n✓ PRODUCTION MODE');
+    console.log('   Authentication handled by Apache (mod_auth_openidc)');
+    console.log('   Reading user identity from request headers');
+  }
+
+  console.log('\n' + '='.repeat(70));
+  console.log('Configure your reverse proxy (Apache) to proxy requests to this socket.');
+  console.log('='.repeat(70) + '\n');
+
+  // Set socket permissions
   try {
     fs.chmodSync(SOCKET_PATH, '666'); // rw-rw-rw-
   } catch (err) {
