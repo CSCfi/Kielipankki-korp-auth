@@ -38,12 +38,12 @@ function requireProxyAuth(req, res, next) {
     return next(); // Not in proxy mode, skip
   }
 
-  // Apache sets these headers from OIDC claims
-  const remoteUser = req.headers['remote-user'];  // OIDC sub
-  const mail = req.headers['mail'];               // Email
-  const displayName = req.headers['displayname']; // Display name
+  // Apache mod_auth_openidc sets these headers when OIDCPassClaimsAs headers is used
+  const oidcSub = req.headers['oidc_claim_sub'];      // OIDC sub claim
+  const oidcEmail = req.headers['oidc_claim_email'];  // Email
+  const oidcName = req.headers['oidc_claim_name'];    // Display name
 
-  if (!remoteUser) {
+  if (!oidcSub) {
     return res.status(401).json({
       error: 'Unauthorized',
       message: 'No user identity from proxy. Ensure Apache mod_auth_openidc is configured.'
@@ -52,9 +52,9 @@ function requireProxyAuth(req, res, next) {
 
   // Attach user info to request
   req.user = {
-    sub: remoteUser,
-    email: mail || null,
-    name: displayName || mail || remoteUser
+    sub: oidcSub,
+    email: oidcEmail || null,
+    name: oidcName || oidcEmail || oidcSub
   };
 
   next();
@@ -73,11 +73,11 @@ function requireProxyAuth(req, res, next) {
 app.get('/login', (req, res) => {
   // PROXY MODE: Act like /jwt endpoint with redirect
   if (config.authMode === 'proxy') {
-    const remoteUser = req.headers['remote-user'];
-    const mail = req.headers['mail'];
-    const displayName = req.headers['displayname'];
+    const oidcSub = req.headers['oidc_claim_sub'];
+    const oidcEmail = req.headers['oidc_claim_email'];
+    const oidcName = req.headers['oidc_claim_name'];
 
-    if (!remoteUser) {
+    if (!oidcSub) {
       return res.status(401).json({
         error: 'Unauthorized',
         message: 'No user identity from proxy. Ensure Apache mod_auth_openidc is configured and user is authenticated.'
@@ -85,9 +85,9 @@ app.get('/login', (req, res) => {
     }
 
     // User is authenticated - generate JWT and redirect
-    const userSub = remoteUser;
-    const userEmail = mail || null;
-    const userName = displayName || mail || remoteUser;
+    const userSub = oidcSub;
+    const userEmail = oidcEmail || null;
+    const userName = oidcName || oidcEmail || oidcSub;
 
     console.log(`[Proxy/Login] Issuing JWT for user: ${userEmail || userSub}`);
 
@@ -271,22 +271,22 @@ app.get('/logout', (req, res) => {
 app.get('/jwt', (req, res) => {
   let userSub, userEmail, userName;
 
-  // PROXY MODE: Read user from Apache headers
+  // PROXY MODE: Read user from Apache OIDC headers
   if (config.authMode === 'proxy') {
-    const remoteUser = req.headers['remote-user'];
-    const mail = req.headers['mail'];
-    const displayName = req.headers['displayname'];
+    const oidcSub = req.headers['oidc_claim_sub'];
+    const oidcEmail = req.headers['oidc_claim_email'];
+    const oidcName = req.headers['oidc_claim_name'];
 
-    if (!remoteUser) {
+    if (!oidcSub) {
       return res.status(401).json({
         error: 'Unauthorized',
         message: 'No user identity from proxy. Ensure Apache mod_auth_openidc is configured and user is authenticated.'
       });
     }
 
-    userSub = remoteUser;
-    userEmail = mail || null;
-    userName = displayName || mail || remoteUser;
+    userSub = oidcSub;
+    userEmail = oidcEmail || null;
+    userName = oidcName || oidcEmail || oidcSub;
 
     console.log(`[Proxy] Issuing JWT for user: ${userEmail || userSub}`);
   }
