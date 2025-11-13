@@ -1,4 +1,4 @@
-const sqlite = require('node:sqlite');
+const Database = require('better-sqlite3');
 const fs = require('node:fs');
 const path = require('node:path');
 const config = require('./config');
@@ -32,7 +32,7 @@ function create_db_if_missing() {
     }
 
     // Create database and tables
-    const db = new sqlite.DatabaseSync(DB_PATH);
+    const db = new Database(DB_PATH);
     
     try {
         // Create USERS table
@@ -79,7 +79,7 @@ function create_db_if_missing() {
 }
 
 function get_user_password(username) {
-    const db = new sqlite.DatabaseSync(DB_PATH);
+    const db = new Database(DB_PATH);
     try {
         const stmt = db.prepare(`
       SELECT password FROM USERS WHERE username = ?`);
@@ -90,7 +90,7 @@ function get_user_password(username) {
 }
 
 function user_exists(username) {
-  const db = new sqlite.DatabaseSync(DB_PATH);
+  const db = new Database(DB_PATH);
   
   try {
     const stmt = db.prepare('SELECT 1 FROM USERS WHERE username = ? LIMIT 1');
@@ -102,7 +102,7 @@ function user_exists(username) {
 }
 
 function get_user_scope(username) {
-    const db = new sqlite.DatabaseSync(DB_PATH);
+    const db = new Database(DB_PATH);
     
     try {
         const stmt = db.prepare(`
@@ -132,7 +132,7 @@ function get_user_scope(username) {
 }
 
 function get_user_scope_all_resources(username) {
-  const db = new sqlite.DatabaseSync(DB_PATH);
+  const db = new Database(DB_PATH);
   
   try {
     const stmt = db.prepare(`
@@ -171,8 +171,8 @@ function create_resource(resource_name, resource_type) {
     if (!['corpus', 'metadata', 'other'].includes(resource_type)) {
         throw new Error('Invalid resource type. Must be corpus, metadata, or other');
     }
-    
-    const db = new sqlite.DatabaseSync(DB_PATH);
+
+    const db = new Database(DB_PATH);
 
     try {
         // Check if resource already exists
@@ -191,7 +191,7 @@ function create_resource(resource_name, resource_type) {
 }
 
 function delete_resource(resource_name) {
-    const db = new sqlite.DatabaseSync(DB_PATH);
+    const db = new Database(DB_PATH);
     
     try {
         const stmt = db.prepare('DELETE FROM RESOURCES WHERE resource_name = ?');
@@ -202,7 +202,7 @@ function delete_resource(resource_name) {
 }
 
 function add_user(username) {
-    const db = new sqlite.DatabaseSync(DB_PATH);
+    const db = new Database(DB_PATH);
     
     try {
         const stmt = db.prepare('INSERT INTO USERS (username) VALUES (?)');
@@ -213,7 +213,7 @@ function add_user(username) {
 }
 
 function delete_user(username) {
-    const db = new sqlite.DatabaseSync(DB_PATH);
+    const db = new Database(DB_PATH);
     
     try {
         const stmt = db.prepare('DELETE FROM USERS WHERE username = ?');
@@ -228,8 +228,8 @@ function set_grant(user, resource_name, level) {
     if (![1, 2, 3].includes(level)) {
         throw new Error('Invalid permission level. Must be 1 (READ), 2 (WRITE), or 3 (ADMIN)');
     }
-    
-    const db = new sqlite.DatabaseSync(DB_PATH);
+
+    const db = new Database(DB_PATH);
     
     try {
         const stmt = db.prepare(`
@@ -245,7 +245,7 @@ function set_grant(user, resource_name, level) {
 }
 
 function remove_grant(user, resource_name) {
-    const db = new sqlite.DatabaseSync(DB_PATH);
+    const db = new Database(DB_PATH);
     
     try {
         const stmt = db.prepare('DELETE FROM GRANTS WHERE username = ? AND resource_name = ?');
@@ -256,7 +256,7 @@ function remove_grant(user, resource_name) {
 }
 
 function user_is_resource_admin(username, resourcename) {
-  const db = new sqlite.DatabaseSync(DB_PATH);
+  const db = new Database(DB_PATH);
   
   try {
     const stmt = db.prepare(`
