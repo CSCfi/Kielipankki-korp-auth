@@ -346,45 +346,6 @@ app.get('/jwt', (req, res) => {
     { algorithm: 'RS256' }
   );
 
-  // Check for redirect parameter
-  const redirectTo = req.query.redirect || req.query.redirect_uri;
-
-  if (redirectTo) {
-    // Validate redirect URL (whitelist check)
-    try {
-      const redirectUrl = new URL(redirectTo);
-      const allowedOrigins = [
-        'https://www.kielipankki.fi',
-        'https://kielipankki.fi',
-        // Add more allowed origins as needed
-      ];
-
-      const isAllowed = allowedOrigins.some(origin =>
-        redirectUrl.origin === origin || redirectUrl.href.startsWith(origin)
-      );
-
-      if (!isAllowed) {
-        console.warn(`[JWT] Rejected redirect to untrusted origin: ${redirectUrl.origin}`);
-        return res.status(400).json({
-          error: 'Invalid redirect URL',
-          message: 'Redirect destination is not in the allowed list'
-        });
-      }
-
-      // Redirect with JWT in URL parameter
-      const separator = redirectUrl.search ? '&' : '?';
-      return res.redirect(`${redirectTo}${separator}jwt=${token}`);
-
-    } catch (error) {
-      console.warn(`[JWT] Invalid redirect URL: ${redirectTo}`);
-      return res.status(400).json({
-        error: 'Invalid redirect URL',
-        message: 'Malformed URL'
-      });
-    }
-  }
-
-  // No redirect: return JWT as text (for API usage)
   res.send(token);
 });
 
