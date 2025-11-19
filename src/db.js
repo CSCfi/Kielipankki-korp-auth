@@ -5,11 +5,8 @@ const config = require('./config');
 
 const DB_PATH = config.dbPath;
 
-// Mock users database
-const demo_users = {
-    'demo@example.com': { password: 'password123'},
-    'tutkija@kielipankki.fi': { password: '123' },
-};
+// Demo users - only used in development mode and only if there is no existing table
+const demo_users = config.isDevelopment ? config.demoUsers : null;
 
 
 // Permission levels
@@ -67,10 +64,11 @@ function create_db_if_missing() {
         // Enable foreign key constraints
         db.exec('PRAGMA foreign_keys = ON');
 
-        // Init demo users
-        const stmt = db.prepare('INSERT INTO USERS (username, password) VALUES (?, ?)');
-        for (const demo_username in demo_users) {
-            stmt.run(demo_username, demo_users[demo_username].password);
+        if (demo_users) {
+            const stmt = db.prepare('INSERT INTO USERS (username, password) VALUES (?, ?)');
+            for (const demo_username in demo_users) {
+                stmt.run(demo_username, demo_users[demo_username].password);
+            }
         }
         
     } finally {

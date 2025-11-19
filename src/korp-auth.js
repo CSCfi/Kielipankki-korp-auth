@@ -30,12 +30,12 @@ app.use(cookieParser());
 const fallback_redirect_uri = config.fallbackRedirectUri;
 
 /**
- * Middleware: Extract user identity from Apache headers (proxy mode)
+ * Middleware: Extract user identity from Apache headers (production mode)
  * or reject if headers are missing
  */
 function requireProxyAuth(req, res, next) {
-  if (config.authMode !== 'proxy') {
-    return next(); // Not in proxy mode, skip
+  if (config.isDevelopment) {
+    return next(); // Development mode, skip
   }
 
   // Apache mod_auth_openidc sets these headers when OIDCPassClaimsAs headers is used
@@ -67,12 +67,12 @@ function requireProxyAuth(req, res, next) {
 /**
  * GET /login
  *
- * Proxy mode: Triggers OIDC authentication and redirects with JWT
- * Local mode: Shows login form
+ * Production mode: Triggers OIDC authentication and redirects with JWT
+ * Development mode: Shows login form
  */
 app.get('/login', (req, res) => {
-  // PROXY MODE: Act like /jwt endpoint with redirect
-  if (config.authMode === 'proxy') {
+  // PRODUCTION MODE: Act like /jwt endpoint with redirect
+  if (config.isProduction) {
     const oidcSub = req.headers['oidc_claim_sub'];
     const oidcEmail = req.headers['oidc_claim_email'];
     const oidcName = req.headers['oidc_claim_name'];
@@ -148,7 +148,7 @@ app.get('/login', (req, res) => {
     return res.send(token);
   }
 
-  // LOCAL MODE: Show login form
+  // DEVELOPMENT MODE: Show login form
   const { redirect, client_id, state, destination } = req.query;
   const finalRedirectUri = redirect || fallback_redirect_uri;
 
@@ -189,14 +189,14 @@ app.get('/login', (req, res) => {
 });
 
 // ============================================================================
-// DEVELOPMENT MODE ENDPOINTS (AUTH_MODE=local)
+// DEVELOPMENT MODE ENDPOINTS (NODE_ENV=development)
 // ============================================================================
 
-// Handle login form submission (local mode only)
+// Handle login form submission (development mode only)
 app.post('/auth', (req, res) => {
-  if (config.authMode === 'proxy') {
+  if (config.isProduction) {
     return res.status(404).json({
-      error: 'Not available in proxy mode',
+      error: 'Not available in production mode',
       message: 'Authentication is handled by Apache.'
     });
   }
@@ -228,11 +228,11 @@ app.post('/auth', (req, res) => {
   }
 });
 
-// Logout (local mode only)
+// Logout (development mode only)
 app.get('/logout', (req, res) => {
-  if (config.authMode === 'proxy') {
+  if (config.isProduction) {
     return res.status(404).json({
-      error: 'Not available in proxy mode',
+      error: 'Not available in production mode',
       message: 'Logout is handled by Apache.'
     });
   }
@@ -265,14 +265,14 @@ app.get('/logout', (req, res) => {
  * GET /jwt
  * Returns a JWT with user identity + resource permissions
  *
- * Proxy mode: Reads user from Apache headers
- * Local mode: Reads user from session cookie
+ * Production mode: Reads user from Apache headers
+ * Development mode: Reads user from session cookie
  */
 app.get('/jwt', (req, res) => {
   let userSub, userEmail, userName;
 
-  // PROXY MODE: Read user from Apache OIDC headers
-  if (config.authMode === 'proxy') {
+  // PRODUCTION MODE: Read user from Apache OIDC headers
+  if (config.isProduction) {
     const oidcSub = req.headers['oidc_claim_sub'];
     const oidcEmail = req.headers['oidc_claim_email'];
     const oidcName = req.headers['oidc_claim_name'];
@@ -288,9 +288,9 @@ app.get('/jwt', (req, res) => {
     userEmail = oidcEmail || null;
     userName = oidcName || oidcEmail || oidcSub;
 
-    console.log(`[Proxy] Issuing JWT for user: ${userEmail || userSub}`);
+    console.log(`[Production] Issuing JWT for user: ${userEmail || userSub}`);
   }
-  // LOCAL MODE: Read user from cookie
+  // DEVELOPMENT MODE: Read user from cookie
   else {
     const sessionToken = req.cookies[auth_cookie_name];
 
@@ -320,7 +320,7 @@ app.get('/jwt', (req, res) => {
       userEmail = username;
       userName = username;
 
-      console.log(`[Local] Issuing JWT for user: ${username}`);
+      console.log(`[Development] Issuing JWT for user: ${username}`);
     } catch (error) {
       res.clearCookie(auth_cookie_name);
       return res.status(401).json({ error: 'unauthorized', message: 'Invalid or expired session' });
@@ -336,7 +336,7 @@ app.get('/jwt', (req, res) => {
       sub: userSub,
       email: userEmail,
       name: userName,
-      idp: config.authMode === 'proxy' ? 'https://aai.kielipankki.fi' : 'kp-auth-local',
+      idp: config.isProduction ? 'https://aai.kielipankki.fi' : 'kp-auth-local',
       scope: scope,
       levels: auth_db.PERMISSIONS,
       exp: Math.floor(Date.now() / 1000) + 3600, // 1 hour
@@ -413,21 +413,25 @@ app.listen(SOCKET_PATH, () => {
   console.log('='.repeat(70));
   console.log('Kielipankki Auth Service');
   console.log('='.repeat(70));
-  console.log(`Mode:            ${config.authMode.toUpperCase()}`);
+  console.log(`Environment:     ${config.nodeEnv.toUpperCase()}`);
   console.log(`Socket:          ${SOCKET_PATH}`);
   console.log(`Database:        ${config.dbPath}`);
   console.log(`JWT Key:         ${config.jwtPrivateKeyPath}`);
   console.log('='.repeat(70));
 
-  if (config.authMode === 'local') {
+  if (config.isDevelopment) {
     console.log('\n⚠️  DEVELOPMENT MODE');
     console.log('   Authentication endpoints available at /login, /auth, /logout');
-    console.log('\n   Demo users:');
-    Object.keys(auth_db.demo_users).forEach(email => {
-      console.log(`     • ${email} / ${auth_db.demo_users[email].password}`);
-    });
-    console.log('\n   In production, set AUTH_MODE=proxy');
-  } else if (config.authMode === 'proxy') {
+    if (auth_db.demo_users) {
+      console.log('\n   Demo users:');
+      Object.keys(auth_db.demo_users).forEach(email => {
+        console.log(`     • ${email} / ${auth_db.demo_users[email].password}`);
+      });
+    } else {
+      console.log('\n   No demo users configured (set DEMO_USERS environment variable)');
+    }
+    console.log('\n   In production, set NODE_ENV=production');
+  } else if (config.isProduction) {
     console.log('\n✓ PRODUCTION MODE');
     console.log('   Authentication handled by Apache (mod_auth_openidc)');
     console.log('   Reading user identity from request headers');
