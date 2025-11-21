@@ -1,0 +1,21 @@
+{
+  "name": "korp-auth",
+  "version": "1.0.0",
+  "description": "Stateless authorization service for Korp, Mink and related Kielipankki tools",
+  "main": "src/korp-auth.js",
+  "scripts": {
+    "start": "node src/korp-auth.js",
+    "dev": "nodemon src/korp-auth.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.2",
+    "cors": "^2.8.5",
+    "cookie-parser": "^1.4.6",
+    "dotenv": "^16.3.1",
+    "better-sqlite3": "^9.2.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
