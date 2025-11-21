@@ -29,37 +29,6 @@ app.use(cookieParser());
 
 const fallback_redirect_uri = config.fallbackRedirectUri;
 
-/**
- * Middleware: Extract user identity from Apache headers (production mode)
- * or reject if headers are missing
- */
-function requireProxyAuth(req, res, next) {
-  if (config.isDevelopment) {
-    return next(); // Development mode, skip
-  }
-
-  // Apache mod_auth_openidc sets these headers when OIDCPassClaimsAs headers is used
-  const oidcSub = req.headers['oidc_claim_sub'];      // OIDC sub claim
-  const oidcEmail = req.headers['oidc_claim_email'];  // Email
-  const oidcName = req.headers['oidc_claim_name'];    // Display name
-
-  if (!oidcSub) {
-    return res.status(401).json({
-      error: 'Unauthorized',
-      message: 'No user identity from proxy. Ensure Apache mod_auth_openidc is configured.'
-    });
-  }
-
-  // Attach user info to request
-  req.user = {
-    sub: oidcSub,
-    email: oidcEmail || null,
-    name: oidcName || oidcEmail || oidcSub
-  };
-
-  next();
-}
-
 // ============================================================================
 // LOGIN ENDPOINT (Available in both modes)
 // ============================================================================
