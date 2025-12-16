@@ -41,7 +41,10 @@ const config = {
   // Development mode only configs
   authCookieName: process.env.AUTH_COOKIE_NAME || 'kp-future-auth-token',
   fallbackRedirectUri: process.env.FALLBACK_REDIRECT_URI || 'https://www.kielipankki.fi',
-  demoUsers: process.env.DEMO_USERS || {};
+  demoUsers: process.env.DEMO_USERS ? JSON.parse(process.env.DEMO_USERS) : {
+    'demo@example.com': { password: 'password123' },
+    'tutkija@kielipankki.fi': { password: '123' }
+  }
 };
 
 module.exports = config;
