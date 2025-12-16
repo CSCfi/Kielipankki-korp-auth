@@ -4,7 +4,14 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const cookieParser = require('cookie-parser');
+const debug = require('debug');
 const config = require('./config');
+const logger = require('./logger');
+
+// Debug namespaces for verbose logging (enable with DEBUG=korp-auth:*)
+const debugHeaders = debug('korp-auth:headers');
+const debugJwt = debug('korp-auth:jwt');
+const debugAuth = debug('korp-auth:auth');
 
 const app = express();
 const SOCKET_PATH = config.socketPath;
@@ -198,13 +205,22 @@ app.get('/logout', (req, res) => {
  * Development mode: Reads user from session cookie
  */
 app.get('/jwt', (req, res) => {
-  let userSub, userEmail, userName;
+  let userSub, userEmail, userName, entitlements;
 
   // PRODUCTION MODE: Read user from Apache OIDC headers
   if (config.isProduction) {
     const oidcSub = req.headers['oidc_claim_sub'];
     const oidcEmail = req.headers['oidc_claim_email'];
     const oidcName = req.headers['oidc_claim_name'];
+    const oidcEntitlements = req.headers['oidc_claim_edupersonentitlement'];
+
+    // Verbose header logging (enable with DEBUG=korp-auth:headers)
+    debugHeaders('OIDC headers received:', {
+      sub: oidcSub,
+      email: oidcEmail,
+      name: oidcName,
+      entitlements: oidcEntitlements
+    });
 
     if (!oidcSub) {
       return res.status(401).json({
@@ -216,8 +232,14 @@ app.get('/jwt', (req, res) => {
     userSub = oidcSub;
     userEmail = oidcEmail || null;
     userName = oidcName || oidcEmail || oidcSub;
+    entitlements = parseEntitlements(oidcEntitlements);
 
-    console.log(`[Production] Issuing JWT for user: ${userEmail || userSub}`);
+    debugAuth('Parsed entitlements:', entitlements);
+
+    // JIT user provisioning - ensure user exists in database
+    auth_db.ensureUser(userSub);
+
+    logger.info(`Issuing JWT for user: ${userEmail || userSub} (${entitlements.length} entitlements)`, 'JWT');
   }
   // DEVELOPMENT MODE: Read user from cookie
   else {
@@ -248,32 +270,36 @@ app.get('/jwt', (req, res) => {
       userSub = username;
       userEmail = username;
       userName = username;
+      entitlements = []; // No entitlements in development mode
 
-      console.log(`[Development] Issuing JWT for user: ${username}`);
+      logger.info(`Issuing JWT for user: ${username}`, 'JWT');
     } catch (error) {
       res.clearCookie(auth_cookie_name);
       return res.status(401).json({ error: 'unauthorized', message: 'Invalid or expired session' });
     }
   }
 
-  // Look up user's resource permissions
-  const scope = auth_db.get_user_scope(userSub);
+  // Look up user's resource permissions (aggregated from user grants + entitlement grants)
+  const scope = auth_db.get_user_scope(userSub, entitlements);
+
+  debugAuth('User scope retrieved:', scope);
 
   // Generate JWT with user identity + permissions
-  const token = jwt.sign(
-    {
-      sub: userSub,
-      email: userEmail,
-      name: userName,
-      idp: config.isProduction ? 'https://aai.kielipankki.fi' : 'kp-auth-local',
-      scope: scope,
-      levels: auth_db.PERMISSIONS,
-      exp: Math.floor(Date.now() / 1000) + 3600, // 1 hour
-      iat: Math.floor(Date.now() / 1000)
-    },
-    JWT_SECRET,
-    { algorithm: 'RS256' }
-  );
+  const jwtPayload = {
+    sub: userSub,
+    email: userEmail,
+    name: userName,
+    idp: config.isProduction ? 'https://aai.kielipankki.fi' : 'kp-auth-local',
+    scope: scope,
+    levels: auth_db.PERMISSIONS,
+    exp: Math.floor(Date.now() / 1000) + 3600, // 1 hour
+    iat: Math.floor(Date.now() / 1000)
+  };
+
+  // Verbose JWT payload logging (enable with DEBUG=korp-auth:jwt)
+  debugJwt('JWT payload:', jwtPayload);
+
+  const token = jwt.sign(jwtPayload, JWT_SECRET, { algorithm: 'RS256' });
 
   res.send(token);
 });
@@ -295,15 +321,15 @@ app.post('/resource/:resourcename', (req, res) => {
     const resourcename = req.params.resourcename;
 
     auth_db.create_resource(resourcename, "corpus");
-    auth_db.set_grant(username, resourcename, auth_db.PERMISSIONS.ADMIN);
+    auth_db.set_grant({ userIdentifier: username, resourceName: resourcename, level: auth_db.PERMISSIONS.ADMIN });
 
-    console.log(`[Resource] Created resource '${resourcename}' for user '${username}'`);
+    logger.info(`Created resource '${resourcename}' for user '${username}'`, 'Resource');
     res.status(201).send(resourcename);
   } catch (error) {
     if (error instanceof auth_db.ResourceExistsError) {
       return res.status(400).json({ error: 'resource already exists'});
     } else {
-      console.log("Returning 401 due to invalid auth token:", error.message);
+      logger.warn(`Invalid auth token for resource creation: ${error.message}`, 'Resource');
       return res.status(401).json({ error: 'invalid auth token' });
     }
   }
@@ -323,7 +349,7 @@ app.delete('/resource/:resourcename', (req, res) => {
   }
 
   auth_db.delete_resource(resourcename);
-  console.log(`[Resource] Deleted resource '${resourcename}'`);
+  logger.info(`Deleted resource '${resourcename}'`, 'Resource');
 
   // 204 No Content (even if it didn't exist)
   return res.status(204).send();
@@ -374,13 +400,13 @@ app.listen(SOCKET_PATH, () => {
   try {
     fs.chmodSync(SOCKET_PATH, '666'); // rw-rw-rw-
   } catch (err) {
-    console.warn('Could not set socket permissions:', err.message);
+    logger.warn(`Could not set socket permissions: ${err.message}`, 'Startup');
   }
 });
 
 // Graceful shutdown - clean up socket file
 process.on('SIGINT', () => {
-  console.log('\nShutting down gracefully...');
+  logger.info('Shutting down gracefully...', 'Shutdown');
   if (fs.existsSync(SOCKET_PATH)) {
     fs.unlinkSync(SOCKET_PATH);
   }
@@ -388,7 +414,7 @@ process.on('SIGINT', () => {
 });
 
 process.on('SIGTERM', () => {
-  console.log('\nReceived SIGTERM, shutting down gracefully...');
+  logger.info('Received SIGTERM, shutting down gracefully...', 'Shutdown');
   if (fs.existsSync(SOCKET_PATH)) {
     fs.unlinkSync(SOCKET_PATH);
   }
