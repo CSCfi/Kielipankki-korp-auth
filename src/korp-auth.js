@@ -30,6 +30,35 @@ app.use(cookieParser());
 const fallback_redirect_uri = config.fallbackRedirectUri;
 
 // ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
+/**
+ * Parse eduPersonEntitlement header into array of URNs
+ * Apache may pass this as a string (semicolon-separated) or array
+ */
+function parseEntitlements(headerValue) {
+  if (!headerValue) {
+    return [];
+  }
+
+  // If already an array, return it
+  if (Array.isArray(headerValue)) {
+    return headerValue;
+  }
+
+  // If string, split by semicolon and trim whitespace
+  if (typeof headerValue === 'string') {
+    return headerValue
+      .split(';')
+      .map(urn => urn.trim())
+      .filter(urn => urn.length > 0);
+  }
+
+  return [];
+}
+
+// ============================================================================
 // LOGIN ENDPOINT (Development mode only)
 // ============================================================================
 
