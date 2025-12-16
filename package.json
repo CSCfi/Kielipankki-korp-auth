@@ -5,15 +5,17 @@
   "main": "src/korp-auth.js",
   "scripts": {
     "start": "node src/korp-auth.js",
-    "dev": "nodemon src/korp-auth.js"
+    "dev": "nodemon src/korp-auth.js",
+    "test": "node test/db.test.js"
   },
   "dependencies": {
-    "express": "^4.18.2",
-    "jsonwebtoken": "^9.0.2",
-    "cors": "^2.8.5",
+    "better-sqlite3": "^9.2.2",
     "cookie-parser": "^1.4.6",
+    "cors": "^2.8.5",
+    "debug": "^4.4.3",
     "dotenv": "^16.3.1",
-    "better-sqlite3": "^9.2.2"
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.2"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
