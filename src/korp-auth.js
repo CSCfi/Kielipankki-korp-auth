@@ -30,91 +30,22 @@ app.use(cookieParser());
 const fallback_redirect_uri = config.fallbackRedirectUri;
 
 // ============================================================================
-// LOGIN ENDPOINT (Available in both modes)
+// LOGIN ENDPOINT (Development mode only)
 // ============================================================================
 
 /**
  * GET /login
  *
- * Production mode: Triggers OIDC authentication and redirects with JWT
+ * Production mode: Not available (Apache handles login/redirect)
  * Development mode: Shows login form
  */
 app.get('/login', (req, res) => {
-  // PRODUCTION MODE: Act like /jwt endpoint with redirect
+  // PRODUCTION MODE: Not available (Apache handles login/redirect)
   if (config.isProduction) {
-    const oidcSub = req.headers['oidc_claim_sub'];
-    const oidcEmail = req.headers['oidc_claim_email'];
-    const oidcName = req.headers['oidc_claim_name'];
-
-    if (!oidcSub) {
-      return res.status(401).json({
-        error: 'Unauthorized',
-        message: 'No user identity from proxy. Ensure Apache mod_auth_openidc is configured and user is authenticated.'
-      });
-    }
-
-    // User is authenticated - generate JWT and redirect
-    const userSub = oidcSub;
-    const userEmail = oidcEmail || null;
-    const userName = oidcName || oidcEmail || oidcSub;
-
-    console.log(`[Proxy/Login] Issuing JWT for user: ${userEmail || userSub}`);
-
-    const scope = auth_db.get_user_scope(userSub);
-
-    const token = jwt.sign(
-      {
-        sub: userSub,
-        email: userEmail,
-        name: userName,
-        idp: 'https://aai.kielipankki.fi',
-        scope: scope,
-        levels: auth_db.PERMISSIONS,
-        exp: Math.floor(Date.now() / 1000) + 3600,
-        iat: Math.floor(Date.now() / 1000)
-      },
-      JWT_SECRET,
-      { algorithm: 'RS256' }
-    );
-
-    // Check for redirect parameter
-    const redirectTo = req.query.redirect || req.query.redirect_uri;
-
-    if (redirectTo) {
-      // Validate redirect URL
-      try {
-        const redirectUrl = new URL(redirectTo);
-        const allowedOrigins = [
-          'https://www.kielipankki.fi',
-          'https://kielipankki.fi',
-        ];
-
-        const isAllowed = allowedOrigins.some(origin =>
-          redirectUrl.origin === origin || redirectUrl.href.startsWith(origin)
-        );
-
-        if (!isAllowed) {
-          console.warn(`[Login] Rejected redirect to untrusted origin: ${redirectUrl.origin}`);
-          return res.status(400).json({
-            error: 'Invalid redirect URL',
-            message: 'Redirect destination is not in the allowed list'
-          });
-        }
-
-        const separator = redirectUrl.search ? '&' : '?';
-        return res.redirect(`${redirectTo}${separator}jwt=${token}`);
-
-      } catch (error) {
-        console.warn(`[Login] Invalid redirect URL: ${redirectTo}`);
-        return res.status(400).json({
-          error: 'Invalid redirect URL',
-          message: 'Malformed URL'
-        });
-      }
-    }
-
-    // No redirect: return JWT as text
-    return res.send(token);
+    return res.status(404).json({
+      error: 'Not available in production mode',
+      message: 'Login and redirect is handled by Apache. Use /jwt endpoint to get JWT token.'
+    });
   }
 
   // DEVELOPMENT MODE: Show login form
