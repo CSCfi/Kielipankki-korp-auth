@@ -12,6 +12,7 @@ const config = {
   jwtPrivateKeyPath: process.env.JWT_PRIVATE_KEY_PATH ||
                      path.join(process.env.AUTH_DIR || path.join(__dirname, '..', 'data'), 'private_key.pem'),
   minkApiKey: process.env.MINK_API_KEY || '',
+  adminApiKey: process.env.ADMIN_API_KEY || '',
   dbPath: process.env.DB_PATH ||
           path.join(process.env.AUTH_DIR || path.join(__dirname, '..', 'data'), 'resources.sqlite3'),
 

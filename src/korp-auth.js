@@ -12,6 +12,7 @@ const logger = require('./logger');
 const debugHeaders = debug('korp-auth:headers');
 const debugJwt = debug('korp-auth:jwt');
 const debugAuth = debug('korp-auth:auth');
+const debugAdmin = debug('korp-auth:admin');
 
 const app = express();
 const SOCKET_PATH = config.socketPath;
@@ -19,6 +20,7 @@ const SOCKET_PATH = config.socketPath;
 // Secret for signing JWTs
 const JWT_SECRET = fs.readFileSync(config.jwtPrivateKeyPath, 'utf8');
 const API_KEY = config.minkApiKey;
+const ADMIN_API_KEY = config.adminApiKey;
 
 const auth_cookie_name = config.authCookieName;
 
@@ -63,6 +65,32 @@ function parseEntitlements(headerValue) {
   }
 
   return [];
+}
+
+/**
+ * Admin API authentication middleware
+ * Requires X-API-Key header with valid ADMIN_API_KEY
+ */
+function requireAdminAuth(req, res, next) {
+  const apiKey = req.headers['x-api-key'];
+
+  if (!apiKey) {
+    return res.status(401).json({
+      error: 'unauthorized',
+      message: 'X-API-Key header required for admin endpoints'
+    });
+  }
+
+  if (apiKey !== ADMIN_API_KEY) {
+    logger.warn('Invalid admin API key attempt', 'Admin');
+    return res.status(401).json({
+      error: 'unauthorized',
+      message: 'Invalid API key'
+    });
+  }
+
+  // API key is valid, proceed to endpoint
+  next();
 }
 
 // ============================================================================
@@ -353,6 +381,298 @@ app.delete('/resource/:resourcename', (req, res) => {
 
   // 204 No Content (even if it didn't exist)
   return res.status(204).send();
+});
+
+// ============================================================================
+// ADMIN API ENDPOINTS (Production only, requires ADMIN_API_KEY)
+// ============================================================================
+
+/**
+ * GET /admin/entitlements
+ * List all entitlements with basic info and grant counts
+ * Requires X-API-Key header
+ */
+app.get('/admin/entitlements', requireAdminAuth, (req, res) => {
+  try {
+    const entitlements = auth_db.listEntitlements();
+
+    debugAdmin('Listed entitlements:', entitlements.length);
+    logger.info(`Listed ${entitlements.length} entitlements`, 'Admin');
+
+    res.status(200).json({ entitlements });
+  } catch (error) {
+    logger.error(`Error listing entitlements: ${error.message}`, 'Admin');
+    return res.status(500).json({
+      error: 'internal_error',
+      message: 'Failed to list entitlements'
+    });
+  }
+});
+
+/**
+ * GET /admin/entitlement/:urn
+ * Get a single entitlement with full grant details
+ * Requires X-API-Key header
+ */
+app.get('/admin/entitlement/:urn', requireAdminAuth, (req, res) => {
+  try {
+    const urn = decodeURIComponent(req.params.urn);
+
+    debugAdmin('Fetching entitlement:', urn);
+
+    // Get entitlement metadata
+    const allEntitlements = auth_db.listEntitlements();
+    const entitlement = allEntitlements.find(e => e.urn === urn);
+
+    if (!entitlement) {
+      return res.status(404).json({
+        error: 'not_found',
+        message: `Entitlement '${urn}' not found`
+      });
+    }
+
+    // Get grants for this entitlement
+    const grants = auth_db.getGrantsForEntitlement(urn);
+
+    const result = {
+      urn: entitlement.urn,
+      description: entitlement.description,
+      created_at: entitlement.created_at,
+      updated_at: entitlement.updated_at,
+      grants: grants
+    };
+
+    debugAdmin('Fetched entitlement:', result);
+    logger.info(`Fetched entitlement: ${urn}`, 'Admin');
+
+    res.status(200).json(result);
+  } catch (error) {
+    logger.error(`Error fetching entitlement: ${error.message}`, 'Admin');
+    return res.status(500).json({
+      error: 'internal_error',
+      message: 'Failed to fetch entitlement'
+    });
+  }
+});
+
+/**
+ * POST /admin/entitlement
+ * Create or update an entitlement (with optional grants)
+ * Requires X-API-Key header
+ *
+ * Request body:
+ * {
+ *   "urn": "urn:nbn:fi:lb-123",
+ *   "description": "Description text",
+ *   "grants": [  // optional
+ *     {"resourceName": "corpus-1", "level": 1},
+ *     {"resourceName": "corpus-2", "level": 2}
+ *   ]
+ * }
+ */
+app.post('/admin/entitlement', requireAdminAuth, (req, res) => {
+  try {
+    const { urn, description, grants } = req.body;
+
+    debugAdmin('POST /admin/entitlement request:', { urn, description, grants });
+
+    // Validate required fields
+    if (!urn || !description) {
+      return res.status(400).json({
+        error: 'validation_error',
+        message: 'Both "urn" and "description" fields are required'
+      });
+    }
+
+    // Validate grants if provided
+    if (grants) {
+      if (!Array.isArray(grants)) {
+        return res.status(400).json({
+          error: 'validation_error',
+          message: '"grants" must be an array'
+        });
+      }
+
+      for (const grant of grants) {
+        if (!grant.resourceName || !grant.level) {
+          return res.status(400).json({
+            error: 'validation_error',
+            message: 'Each grant must have "resourceName" and "level" fields'
+          });
+        }
+
+        if (![1, 2, 3].includes(grant.level)) {
+          return res.status(400).json({
+            error: 'validation_error',
+            message: 'Grant level must be 1 (READ), 2 (WRITE), or 3 (ADMIN)'
+          });
+        }
+      }
+    }
+
+    // Check if entitlement exists
+    const exists = auth_db.entitlementExists(urn);
+
+    // Create or update entitlement
+    if (exists) {
+      auth_db.updateEntitlementDescription(urn, description);
+    } else {
+      auth_db.createEntitlement(urn, description);
+    }
+
+    // Add grants if provided
+    let grantsAdded = 0;
+    if (grants && grants.length > 0) {
+      for (const grant of grants) {
+        auth_db.set_grant({
+          entitlementUrn: urn,
+          resourceName: grant.resourceName,
+          level: grant.level
+        });
+        grantsAdded++;
+      }
+    }
+
+    const result = {
+      urn,
+      description,
+      created: !exists,
+      grantsAdded
+    };
+
+    debugAdmin('Created/updated entitlement:', result);
+    logger.info(`${exists ? 'Updated' : 'Created'} entitlement: ${urn} (${grantsAdded} grants)`, 'Admin');
+
+    res.status(exists ? 200 : 201).json(result);
+  } catch (error) {
+    logger.error(`Error creating/updating entitlement: ${error.message}`, 'Admin');
+    return res.status(500).json({
+      error: 'internal_error',
+      message: 'Failed to create/update entitlement'
+    });
+  }
+});
+
+/**
+ * DELETE /admin/entitlement/:urn
+ * Delete an entitlement and all associated grants
+ * Requires X-API-Key header
+ */
+app.delete('/admin/entitlement/:urn', requireAdminAuth, (req, res) => {
+  try {
+    const urn = decodeURIComponent(req.params.urn);
+
+    debugAdmin('Deleting entitlement:', urn);
+
+    auth_db.deleteEntitlement(urn);
+
+    logger.info(`Deleted entitlement: ${urn}`, 'Admin');
+
+    // 204 No Content (idempotent - even if didn't exist)
+    res.status(204).send();
+  } catch (error) {
+    logger.error(`Error deleting entitlement: ${error.message}`, 'Admin');
+    return res.status(500).json({
+      error: 'internal_error',
+      message: 'Failed to delete entitlement'
+    });
+  }
+});
+
+/**
+ * POST /admin/grant
+ * Add or update a single grant for an entitlement
+ * Requires X-API-Key header
+ *
+ * Request body:
+ * {
+ *   "entitlementUrn": "urn:nbn:fi:lb-123",
+ *   "resourceName": "corpus-1",
+ *   "level": 1
+ * }
+ */
+app.post('/admin/grant', requireAdminAuth, (req, res) => {
+  try {
+    const { entitlementUrn, resourceName, level } = req.body;
+
+    debugAdmin('POST /admin/grant request:', { entitlementUrn, resourceName, level });
+
+    // Validate required fields
+    if (!entitlementUrn || !resourceName || !level) {
+      return res.status(400).json({
+        error: 'validation_error',
+        message: 'All fields required: "entitlementUrn", "resourceName", "level"'
+      });
+    }
+
+    // Validate level
+    if (![1, 2, 3].includes(level)) {
+      return res.status(400).json({
+        error: 'validation_error',
+        message: 'Level must be 1 (READ), 2 (WRITE), or 3 (ADMIN)'
+      });
+    }
+
+    // Set the grant (uses upsert)
+    auth_db.set_grant({ entitlementUrn, resourceName, level });
+
+    const result = { entitlementUrn, resourceName, level };
+
+    debugAdmin('Set grant:', result);
+    logger.info(`Set grant: ${entitlementUrn} -> ${resourceName} (level ${level})`, 'Admin');
+
+    res.status(200).json(result);
+  } catch (error) {
+    // Check for foreign key constraint failures
+    if (error.message && error.message.includes('FOREIGN KEY constraint failed')) {
+      return res.status(404).json({
+        error: 'not_found',
+        message: 'Entitlement or resource not found'
+      });
+    }
+
+    logger.error(`Error setting grant: ${error.message}`, 'Admin');
+    return res.status(500).json({
+      error: 'internal_error',
+      message: 'Failed to set grant'
+    });
+  }
+});
+
+/**
+ * DELETE /admin/grant
+ * Remove a grant for an entitlement
+ * Requires X-API-Key header
+ * Query params: ?entitlementUrn=...&resourceName=...
+ */
+app.delete('/admin/grant', requireAdminAuth, (req, res) => {
+  try {
+    const { entitlementUrn, resourceName } = req.query;
+
+    debugAdmin('DELETE /admin/grant request:', { entitlementUrn, resourceName });
+
+    // Validate query params
+    if (!entitlementUrn || !resourceName) {
+      return res.status(400).json({
+        error: 'validation_error',
+        message: 'Query params required: "entitlementUrn" and "resourceName"'
+      });
+    }
+
+    // Remove the grant
+    auth_db.remove_grant({ entitlementUrn, resourceName });
+
+    logger.info(`Removed grant: ${entitlementUrn} -> ${resourceName}`, 'Admin');
+
+    // 204 No Content
+    res.status(204).send();
+  } catch (error) {
+    logger.error(`Error removing grant: ${error.message}`, 'Admin');
+    return res.status(500).json({
+      error: 'internal_error',
+      message: 'Failed to remove grant'
+    });
+  }
 });
 
 // ============================================================================
