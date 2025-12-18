@@ -68,6 +68,110 @@ function parseEntitlements(headerValue) {
 }
 
 /**
+ * Parse affiliation header into array of values
+ * Apache may pass this as a string (semicolon-separated) or array
+ */
+function parseAffiliations(headerValue) {
+  if (!headerValue) {
+    return [];
+  }
+
+  // If already an array, return it
+  if (Array.isArray(headerValue)) {
+    return headerValue;
+  }
+
+  // If string, split by semicolon and trim whitespace
+  if (typeof headerValue === 'string') {
+    return headerValue
+      .split(';')
+      .map(aff => aff.trim())
+      .filter(aff => aff.length > 0);
+  }
+
+  return [];
+}
+
+/**
+ * Check if user has academic (ACA) status
+ * Based on eduPersonAffiliation, eduPersonScopedAffiliation, and eduPersonEntitlement claims
+ *
+ * Academic status is granted if ANY of these conditions are met:
+ * 1. Unscoped affiliation contains: member, student, faculty, or employee
+ * 2. CLARIN special case: member@clarin.eu affiliation + http://www.clarin.eu/entitlement/academic entitlement
+ * 3. Other scoped affiliation: (member|student|faculty|employee)@domain (but NOT member@clarin.eu)
+ * 4. LBR ACA entitlement: urn:nbn:fi:lb-2016110710@LBR
+ */
+function checkAcademicStatus(affiliations, scopedAffiliations, entitlements) {
+  const debugAca = debug('korp-auth:aca');
+
+  // Parse all inputs
+  const unscopedAffs = parseAffiliations(affiliations);
+  const scopedAffs = parseAffiliations(scopedAffiliations);
+  const ents = parseEntitlements(entitlements);
+
+  debugAca('Checking ACA status:', {
+    unscopedAffiliations: unscopedAffs,
+    scopedAffiliations: scopedAffs,
+    entitlements: ents
+  });
+
+  // Academic affiliation values
+  const academicAffiliations = ['member', 'student', 'faculty', 'employee'];
+
+  // 1. Check unscoped affiliations
+  for (const aff of unscopedAffs) {
+    if (academicAffiliations.includes(aff.toLowerCase())) {
+      debugAca('ACA granted via unscoped affiliation:', aff);
+      return true;
+    }
+  }
+
+  // 2. Check CLARIN special case
+  const hasClarinMember = scopedAffs.some(aff =>
+    aff.toLowerCase() === 'member@clarin.eu'
+  );
+  const hasClarinAcademicEntitlement = ents.some(ent =>
+    ent === 'http://www.clarin.eu/entitlement/academic'
+  );
+  if (hasClarinMember && hasClarinAcademicEntitlement) {
+    debugAca('ACA granted via CLARIN special case');
+    return true;
+  }
+
+  // 3. Check other scoped affiliations (excluding CLARIN member@clarin.eu)
+  for (const aff of scopedAffs) {
+    const lowerAff = aff.toLowerCase();
+
+    // Skip CLARIN member (already handled in special case)
+    if (lowerAff === 'member@clarin.eu') {
+      continue;
+    }
+
+    // Check if affiliation matches academic patterns with @ (scoped)
+    for (const academicRole of academicAffiliations) {
+      // Pattern: role@domain (e.g., member@helsinki.fi, student@jyu.fi)
+      if (lowerAff.startsWith(academicRole + '@')) {
+        debugAca('ACA granted via scoped affiliation:', aff);
+        return true;
+      }
+    }
+  }
+
+  // 4. Check LBR ACA entitlement
+  const hasLbrAca = ents.some(ent =>
+    ent === 'urn:nbn:fi:lb-2016110710@LBR'
+  );
+  if (hasLbrAca) {
+    debugAca('ACA granted via LBR entitlement');
+    return true;
+  }
+
+  debugAca('ACA not granted');
+  return false;
+}
+
+/**
  * Admin API authentication middleware
  * Requires X-API-Key header with valid ADMIN_API_KEY
  */
@@ -233,7 +337,7 @@ app.get('/logout', (req, res) => {
  * Development mode: Reads user from session cookie
  */
 app.get('/jwt', (req, res) => {
-  let userSub, userEmail, userName, entitlements;
+  let userSub, userEmail, userName, entitlements, isAcademic;
 
   // PRODUCTION MODE: Read user from Apache OIDC headers
   if (config.isProduction) {
@@ -241,13 +345,17 @@ app.get('/jwt', (req, res) => {
     const oidcEmail = req.headers['oidc_claim_email'];
     const oidcName = req.headers['oidc_claim_name'];
     const oidcEntitlements = req.headers['oidc_claim_edupersonentitlement'];
+    const oidcAffiliation = req.headers['oidc_claim_edupersonaffiliation'];
+    const oidcScopedAffiliation = req.headers['oidc_claim_edupersonscopedaffiliation'];
 
     // Verbose header logging (enable with DEBUG=korp-auth:headers)
     debugHeaders('OIDC headers received:', {
       sub: oidcSub,
       email: oidcEmail,
       name: oidcName,
-      entitlements: oidcEntitlements
+      entitlements: oidcEntitlements,
+      affiliation: oidcAffiliation,
+      scopedAffiliation: oidcScopedAffiliation
     });
 
     if (!oidcSub) {
@@ -262,12 +370,16 @@ app.get('/jwt', (req, res) => {
     userName = oidcName || oidcEmail || oidcSub;
     entitlements = parseEntitlements(oidcEntitlements);
 
+    // Check academic status
+    isAcademic = checkAcademicStatus(oidcAffiliation, oidcScopedAffiliation, oidcEntitlements);
+
     debugAuth('Parsed entitlements:', entitlements);
+    debugAuth('Academic status (ACA):', isAcademic);
 
     // JIT user provisioning - ensure user exists in database
     auth_db.ensureUser(userSub);
 
-    logger.info(`Issuing JWT for user: ${userEmail || userSub} (${entitlements.length} entitlements)`, 'JWT');
+    logger.info(`Issuing JWT for user: ${userEmail || userSub} (${entitlements.length} entitlements, ACA: ${isAcademic})`, 'JWT');
   }
   // DEVELOPMENT MODE: Read user from cookie
   else {
@@ -299,6 +411,7 @@ app.get('/jwt', (req, res) => {
       userEmail = username;
       userName = username;
       entitlements = []; // No entitlements in development mode
+      isAcademic = false; // No ACA status in development mode
 
       logger.info(`Issuing JWT for user: ${username}`, 'JWT');
     } catch (error) {
@@ -318,6 +431,7 @@ app.get('/jwt', (req, res) => {
     email: userEmail,
     name: userName,
     idp: config.isProduction ? 'https://aai.kielipankki.fi' : 'kp-auth-local',
+    ACA: isAcademic,
     scope: scope,
     levels: auth_db.PERMISSIONS,
     exp: Math.floor(Date.now() / 1000) + 3600, // 1 hour
