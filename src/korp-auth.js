@@ -19,7 +19,7 @@ const SOCKET_PATH = config.socketPath;
 
 // Secret for signing JWTs
 const JWT_SECRET = fs.readFileSync(config.jwtPrivateKeyPath, 'utf8');
-const API_KEY = config.minkApiKey;
+const MINK_API_KEY = config.minkApiKey;
 const ADMIN_API_KEY = config.adminApiKey;
 
 const auth_cookie_name = config.authCookieName;
@@ -448,10 +448,28 @@ app.get('/jwt', (req, res) => {
 
 /**
  * POST /resource/:resourcename
- * Create a new resource and grant the creator ADMIN permission
- * Requires JWT authentication
+ * Create a new user-uploaded resource and grant the creator ADMIN permission
+ * Requires Mink API key (Authorization header) and JWT authentication
+ * Only allows resources starting with "mink-" prefix
  */
 app.post('/resource/:resourcename', (req, res) => {
+  const resourcename = req.params.resourcename;
+  const authHeader = req.headers.authorization;
+
+  // Check 1: Verify Mink API key
+  if (authHeader !== "apikey " + MINK_API_KEY) {
+    return res.status(401).json({ error: 'unauthorized', message: 'Valid Mink API key required' });
+  }
+
+  // Check 2: Verify resource name starts with "mink-"
+  if (!resourcename.startsWith('mink-')) {
+    return res.status(400).json({
+      error: 'invalid_resource_name',
+      message: 'User-uploaded resources must start with "mink-" prefix'
+    });
+  }
+
+  // Check 3: Verify JWT
   const authCode = req.body.jwt;
   if (!authCode) {
     return res.status(401).json({ error: 'unauthorized', message: 'JWT required in request body' });
@@ -460,7 +478,6 @@ app.post('/resource/:resourcename', (req, res) => {
   try {
     const decoded = jwt.verify(authCode, JWT_SECRET);
     const username = decoded.sub || decoded.email;
-    const resourcename = req.params.resourcename;
 
     auth_db.create_resource(resourcename, "corpus");
     auth_db.set_grant({ userIdentifier: username, resourceName: resourcename, level: auth_db.PERMISSIONS.ADMIN });
@@ -479,22 +496,59 @@ app.post('/resource/:resourcename', (req, res) => {
 
 /**
  * DELETE /resource/:resourcename
- * Delete a resource and all its grants
- * Requires Mink API key (service-to-service authentication)
+ * Delete a user-uploaded resource and all its grants
+ * Requires Mink API key (Authorization header) and JWT authentication
+ * User must have ADMIN permission on the resource
+ * Only allows resources starting with "mink-" prefix
  */
 app.delete('/resource/:resourcename', (req, res) => {
   const authHeader = req.headers.authorization;
   const resourcename = req.params.resourcename;
 
-  if (authHeader !== "apikey " + API_KEY) {
-    return res.status(401).json({ error: 'unauthorized', message: 'Valid API key required' });
+  // Check 1: Verify Mink API key
+  if (authHeader !== "apikey " + MINK_API_KEY) {
+    return res.status(401).json({ error: 'unauthorized', message: 'Valid Mink API key required' });
   }
 
-  auth_db.delete_resource(resourcename);
-  logger.info(`Deleted resource '${resourcename}'`, 'Resource');
+  // Check 2: Verify resource name starts with "mink-"
+  if (!resourcename.startsWith('mink-')) {
+    return res.status(400).json({
+      error: 'invalid_resource_name',
+      message: 'User-uploaded resources must start with "mink-" prefix'
+    });
+  }
 
-  // 204 No Content (even if it didn't exist)
-  return res.status(204).send();
+  // Check 3: Verify JWT
+  const authCode = req.body.jwt;
+  if (!authCode) {
+    return res.status(401).json({ error: 'unauthorized', message: 'JWT required in request body' });
+  }
+
+  try {
+    const decoded = jwt.verify(authCode, JWT_SECRET);
+    const username = decoded.sub || decoded.email;
+
+    // Check 4: Verify user has ADMIN permission on the resource
+    const userScope = decoded.scope;
+    const resourcePermission = userScope?.corpora?.[resourcename];
+
+    if (resourcePermission !== auth_db.PERMISSIONS.ADMIN) {
+      logger.warn(`User '${username}' attempted to delete resource '${resourcename}' without ADMIN permission`, 'Resource');
+      return res.status(403).json({
+        error: 'forbidden',
+        message: 'ADMIN permission required to delete this resource'
+      });
+    }
+
+    auth_db.delete_resource(resourcename);
+    logger.info(`Deleted resource '${resourcename}' by user '${username}'`, 'Resource');
+
+    // 204 No Content
+    return res.status(204).send();
+  } catch (error) {
+    logger.warn(`Invalid auth token for resource deletion: ${error.message}`, 'Resource');
+    return res.status(401).json({ error: 'invalid auth token' });
+  }
 });
 
 // ============================================================================
