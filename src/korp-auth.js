@@ -44,7 +44,7 @@ const fallback_redirect_uri = config.fallbackRedirectUri;
 
 /**
  * Parse eduPersonEntitlement header into array of URNs
- * Apache may pass this as a string (semicolon-separated) or array
+ * They may arrive as a string (hopefully semicolon-separated) or array
  */
 function parseEntitlements(headerValue) {
   if (!headerValue) {
@@ -69,7 +69,6 @@ function parseEntitlements(headerValue) {
 
 /**
  * Parse affiliation header into array of values
- * Apache may pass this as a string (semicolon-separated) or array
  */
 function parseAffiliations(headerValue) {
   if (!headerValue) {
