@@ -375,9 +375,6 @@ app.get('/jwt', (req, res) => {
     debugAuth('Parsed entitlements:', entitlements);
     debugAuth('Academic status (ACA):', isAcademic);
 
-    // JIT user provisioning - ensure user exists in database
-    auth_db.ensure_user(userSub);
-
     logger.info(`Issuing JWT for user: ${userEmail || userSub} (${entitlements.length} entitlements, ACA: ${isAcademic})`, 'JWT');
   }
   // DEVELOPMENT MODE: Read user from cookie
@@ -477,6 +474,9 @@ app.post('/resource/:resourcename', (req, res) => {
   try {
     const decoded = jwt.verify(authCode, JWT_SECRET);
     const username = decoded.sub || decoded.email;
+
+    // Ensure user exists in database before creating grant
+    auth_db.ensure_user(username);
 
     auth_db.create_resource(resourcename, "corpus");
     auth_db.set_grant({ userIdentifier: username, resourceName: resourcename, level: auth_db.PERMISSIONS.ADMIN });
