@@ -281,6 +281,37 @@ function testResourceManagement() {
   }
   console.log('✓ Create resource');
 
+  // Test: resource_exists
+  assert(db.resource_exists('new-corpus'), 'Created resource should exist');
+  assert(!db.resource_exists('nonexistent-corpus'), 'Non-existent resource should not exist');
+  console.log('✓ Check resource exists');
+
+  // Test: list_resources
+  db.create_resource('another-corpus', 'corpus');
+  db.create_resource('test-metadata', 'metadata');
+  const resources = db.list_resources();
+  assert(Array.isArray(resources), 'list_resources should return array');
+  assert(resources.length === 3, 'Should have 3 resources');
+  const corpusResource = resources.find(r => r.resource_name === 'new-corpus');
+  assert(corpusResource !== undefined, 'Should find new-corpus');
+  assert(corpusResource.type === 'corpus', 'Should have correct type');
+  assert(corpusResource.grant_count === 0, 'Should have 0 grants initially');
+  console.log('✓ List resources');
+
+  // Test: list_resources includes grant counts
+  db.set_grant({ userIdentifier: 'demo@example.com', resourceName: 'new-corpus', level: 1 });
+  db.create_entitlement('urn:test@LBR', 'Test');
+  db.set_grant({ entitlementUrn: 'urn:test@LBR', resourceName: 'new-corpus', level: 2 });
+  const resourcesWithGrants = db.list_resources();
+  const corpusWithGrants = resourcesWithGrants.find(r => r.resource_name === 'new-corpus');
+  assert(corpusWithGrants.grant_count === 2, 'Should count grants correctly');
+  console.log('✓ List resources includes grant counts');
+
+  // Clean up for next test
+  db.delete_resource('another-corpus');
+  db.delete_resource('test-metadata');
+  db.delete_entitlement('urn:test@LBR');
+
   // Test: Cannot create duplicate resource
   let errorThrown = false;
   try {

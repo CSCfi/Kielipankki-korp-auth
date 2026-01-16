@@ -250,6 +250,38 @@ function delete_resource(resource_name) {
     }
 }
 
+function resource_exists(resource_name) {
+    const db = new Database(DB_PATH);
+
+    try {
+        const stmt = db.prepare('SELECT 1 FROM RESOURCES WHERE resource_name = ? LIMIT 1');
+        const result = stmt.get(resource_name);
+        return result !== undefined;
+    } finally {
+        db.close();
+    }
+}
+
+function list_resources() {
+    const db = new Database(DB_PATH);
+
+    try {
+        const stmt = db.prepare(`
+      SELECT
+        r.resource_name,
+        r.type,
+        COUNT(g.id) as grant_count
+      FROM RESOURCES r
+      LEFT JOIN GRANTS g ON r.resource_name = g.resource_name
+      GROUP BY r.resource_name
+      ORDER BY r.type, r.resource_name
+    `);
+        return stmt.all();
+    } finally {
+        db.close();
+    }
+}
+
 function add_user(identifier) {
     const db = new Database(DB_PATH);
 
@@ -501,6 +533,8 @@ module.exports = {
     ResourceExistsError,
     create_resource,
     delete_resource,
+    resource_exists,
+    list_resources,
     add_user,
     delete_user,
     set_grant,

@@ -842,6 +842,113 @@ app.delete('/admin/grant', requireAdminAuth, (req, res) => {
   }
 });
 
+/**
+ * GET /admin/resources
+ * List all resources with grant counts
+ * Requires X-API-Key header
+ */
+app.get('/admin/resources', requireAdminAuth, (req, res) => {
+  try {
+    const resources = auth_db.list_resources();
+
+    debugAdmin('Listed resources:', resources.length);
+    logger.info(`Listed ${resources.length} resources`, 'Admin');
+
+    res.status(200).json({ resources });
+  } catch (error) {
+    logger.error(`Error listing resources: ${error.message}`, 'Admin');
+    return res.status(500).json({
+      error: 'internal_error',
+      message: 'Failed to list resources'
+    });
+  }
+});
+
+/**
+ * POST /admin/resource
+ * Create a new resource
+ * Requires X-API-Key header
+ *
+ * Request body:
+ * {
+ *   "name": "corpus-name",
+ *   "type": "corpus"  // corpus, metadata, or other
+ * }
+ */
+app.post('/admin/resource', requireAdminAuth, (req, res) => {
+  try {
+    const { name, type } = req.body;
+
+    debugAdmin('POST /admin/resource request:', { name, type });
+
+    // Validate required fields
+    if (!name || !type) {
+      return res.status(400).json({
+        error: 'validation_error',
+        message: 'Both "name" and "type" fields are required'
+      });
+    }
+
+    // Validate type
+    if (!['corpus', 'metadata', 'other'].includes(type)) {
+      return res.status(400).json({
+        error: 'validation_error',
+        message: 'Type must be "corpus", "metadata", or "other"'
+      });
+    }
+
+    // Create the resource
+    auth_db.create_resource(name, type);
+
+    const result = { name, type, created: true };
+
+    debugAdmin('Created resource:', result);
+    logger.info(`Created resource: ${name} (type: ${type})`, 'Admin');
+
+    res.status(201).json(result);
+  } catch (error) {
+    // Check for duplicate resource
+    if (error instanceof auth_db.ResourceExistsError) {
+      return res.status(409).json({
+        error: 'conflict',
+        message: `Resource '${req.body.name}' already exists`
+      });
+    }
+
+    logger.error(`Error creating resource: ${error.message}`, 'Admin');
+    return res.status(500).json({
+      error: 'internal_error',
+      message: 'Failed to create resource'
+    });
+  }
+});
+
+/**
+ * DELETE /admin/resource/:name
+ * Delete a resource and all associated grants
+ * Requires X-API-Key header
+ */
+app.delete('/admin/resource/:name', requireAdminAuth, (req, res) => {
+  try {
+    const name = decodeURIComponent(req.params.name);
+
+    debugAdmin('Deleting resource:', name);
+
+    auth_db.delete_resource(name);
+
+    logger.info(`Deleted resource: ${name}`, 'Admin');
+
+    // 204 No Content (idempotent - even if didn't exist)
+    res.status(204).send();
+  } catch (error) {
+    logger.error(`Error deleting resource: ${error.message}`, 'Admin');
+    return res.status(500).json({
+      error: 'internal_error',
+      message: 'Failed to delete resource'
+    });
+  }
+});
+
 // ============================================================================
 // SERVER STARTUP
 // ============================================================================
