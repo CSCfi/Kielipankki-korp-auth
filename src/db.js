@@ -375,7 +375,7 @@ function user_is_resource_admin(userIdentifier, resourcename) {
 // User Management
 // ============================================================================
 
-function ensureUser(identifier) {
+function ensure_user(identifier) {
     const db = new Database(DB_PATH);
 
     try {
@@ -399,7 +399,7 @@ function ensureUser(identifier) {
 // Entitlement Management
 // ============================================================================
 
-function createEntitlement(urn, description = null) {
+function create_entitlement(urn, description = null) {
     const db = new Database(DB_PATH);
 
     try {
@@ -411,7 +411,7 @@ function createEntitlement(urn, description = null) {
     }
 }
 
-function entitlementExists(urn) {
+function entitlement_exists(urn) {
     const db = new Database(DB_PATH);
 
     try {
@@ -423,7 +423,7 @@ function entitlementExists(urn) {
     }
 }
 
-function listEntitlements() {
+function list_entitlements() {
     const db = new Database(DB_PATH);
 
     try {
@@ -446,7 +446,7 @@ function listEntitlements() {
     }
 }
 
-function updateEntitlementDescription(urn, description) {
+function update_entitlement_description(urn, description) {
     const db = new Database(DB_PATH);
 
     try {
@@ -461,7 +461,7 @@ function updateEntitlementDescription(urn, description) {
     }
 }
 
-function deleteEntitlement(urn) {
+function delete_entitlement(urn) {
     const db = new Database(DB_PATH);
 
     try {
@@ -473,7 +473,7 @@ function deleteEntitlement(urn) {
     }
 }
 
-function getGrantsForEntitlement(urn) {
+function get_grants_for_entitlement(urn) {
     const db = new Database(DB_PATH);
 
     try {
@@ -508,12 +508,12 @@ module.exports = {
     user_is_resource_admin,
     PERMISSIONS,
     // User management
-    ensureUser,
+    ensure_user,
     // Entitlement management
-    createEntitlement,
-    entitlementExists,
-    listEntitlements,
-    updateEntitlementDescription,
-    deleteEntitlement,
-    getGrantsForEntitlement
+    create_entitlement,
+    entitlement_exists,
+    list_entitlements,
+    update_entitlement_description,
+    delete_entitlement,
+    get_grants_for_entitlement
 };

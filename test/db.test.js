@@ -96,33 +96,33 @@ function testEntitlementManagement() {
   setupTestDatabase();
 
   // Test: Create entitlement
-  const entId = db.createEntitlement('urn:nbn:fi:lb-2022031701@LBR', 'Test Entitlement');
-  assert(typeof entId === 'number', 'createEntitlement should return entitlement ID');
+  const entId = db.create_entitlement('urn:nbn:fi:lb-2022031701@LBR', 'Test Entitlement');
+  assert(typeof entId === 'number', 'create_entitlement should return entitlement ID');
   console.log('✓ Create entitlement');
 
   // Test: Entitlement exists
-  assert(db.entitlementExists('urn:nbn:fi:lb-2022031701@LBR'), 'Created entitlement should exist');
-  assert(!db.entitlementExists('urn:nbn:fi:lb-9999999999@LBR'), 'Non-existent entitlement should not exist');
+  assert(db.entitlement_exists('urn:nbn:fi:lb-2022031701@LBR'), 'Created entitlement should exist');
+  assert(!db.entitlement_exists('urn:nbn:fi:lb-9999999999@LBR'), 'Non-existent entitlement should not exist');
   console.log('✓ Check entitlement exists');
 
   // Test: List entitlements
-  const entitlements = db.listEntitlements();
-  assert(Array.isArray(entitlements), 'listEntitlements should return array');
+  const entitlements = db.list_entitlements();
+  assert(Array.isArray(entitlements), 'list_entitlements should return array');
   assert(entitlements.length === 1, 'Should have 1 entitlement');
   assert(entitlements[0].urn === 'urn:nbn:fi:lb-2022031701@LBR', 'Should return correct URN');
   assert(entitlements[0].description === 'Test Entitlement', 'Should return correct description');
   console.log('✓ List entitlements');
 
   // Test: Update entitlement description
-  db.updateEntitlementDescription('urn:nbn:fi:lb-2022031701@LBR', 'Updated Description');
-  const updated = db.listEntitlements();
+  db.update_entitlement_description('urn:nbn:fi:lb-2022031701@LBR', 'Updated Description');
+  const updated = db.list_entitlements();
   assert(updated[0].description === 'Updated Description', 'Description should be updated');
   console.log('✓ Update entitlement description');
 
   // Test: Delete entitlement
-  const deleted = db.deleteEntitlement('urn:nbn:fi:lb-2022031701@LBR');
-  assert(deleted === true, 'deleteEntitlement should return true when deleted');
-  assert(!db.entitlementExists('urn:nbn:fi:lb-2022031701@LBR'), 'Entitlement should no longer exist');
+  const deleted = db.delete_entitlement('urn:nbn:fi:lb-2022031701@LBR');
+  assert(deleted === true, 'delete_entitlement should return true when deleted');
+  assert(!db.entitlement_exists('urn:nbn:fi:lb-2022031701@LBR'), 'Entitlement should no longer exist');
   console.log('✓ Delete entitlement');
 }
 
@@ -137,11 +137,11 @@ function testGrantManagement() {
 
   // Setup test data
   db.create_resource('test-corpus', 'corpus');
-  db.createEntitlement('urn:nbn:fi:lb-2022031701@LBR', 'Test Entitlement');
+  db.create_entitlement('urn:nbn:fi:lb-2022031701@LBR', 'Test Entitlement');
 
   // Test: Set grant for entitlement
   db.set_grant({ entitlementUrn: 'urn:nbn:fi:lb-2022031701@LBR', resourceName: 'test-corpus', level: 1 });
-  const grants = db.getGrantsForEntitlement('urn:nbn:fi:lb-2022031701@LBR');
+  const grants = db.get_grants_for_entitlement('urn:nbn:fi:lb-2022031701@LBR');
   assert(grants.length === 1, 'Should have 1 grant');
   assert(grants[0].resource_name === 'test-corpus', 'Grant should be for correct resource');
   assert(grants[0].permission_level === 1, 'Grant should have correct permission level');
@@ -149,7 +149,7 @@ function testGrantManagement() {
 
   // Test: Upsert grant (update existing)
   db.set_grant({ entitlementUrn: 'urn:nbn:fi:lb-2022031701@LBR', resourceName: 'test-corpus', level: 2 });
-  const updated = db.getGrantsForEntitlement('urn:nbn:fi:lb-2022031701@LBR');
+  const updated = db.get_grants_for_entitlement('urn:nbn:fi:lb-2022031701@LBR');
   assert(updated.length === 1, 'Should still have 1 grant (no duplicate)');
   assert(updated[0].permission_level === 2, 'Permission level should be updated');
   console.log('✓ Upsert grant (update existing)');
@@ -162,7 +162,7 @@ function testGrantManagement() {
 
   // Test: Remove grant
   db.remove_grant({ entitlementUrn: 'urn:nbn:fi:lb-2022031701@LBR', resourceName: 'test-corpus' });
-  const afterRemove = db.getGrantsForEntitlement('urn:nbn:fi:lb-2022031701@LBR');
+  const afterRemove = db.get_grants_for_entitlement('urn:nbn:fi:lb-2022031701@LBR');
   assert(afterRemove.length === 0, 'Grant should be removed');
   console.log('✓ Remove grant');
 }
@@ -181,8 +181,8 @@ function testPermissionAggregation() {
   db.create_resource('corpus-2', 'corpus');
   db.create_resource('metadata-1', 'metadata');
 
-  db.createEntitlement('urn:nbn:fi:lb-2022031701@LBR', 'Research Access');
-  db.createEntitlement('urn:nbn:fi:lb-2023050901@LBR', 'Special Access');
+  db.create_entitlement('urn:nbn:fi:lb-2022031701@LBR', 'Research Access');
+  db.create_entitlement('urn:nbn:fi:lb-2023050901@LBR', 'Special Access');
 
   // Set up conflicting permissions
   db.set_grant({ entitlementUrn: 'urn:nbn:fi:lb-2022031701@LBR', resourceName: 'corpus-1', level: 1 }); // READ
@@ -227,15 +227,15 @@ function testUserManagement() {
   setupTestDatabase();
 
   // Test: JIT user provisioning
-  const userId = db.ensureUser('newuser@example.com');
-  assert(typeof userId === 'number', 'ensureUser should return user ID');
-  assert(db.user_exists('newuser@example.com'), 'User should exist after ensureUser');
-  console.log('✓ JIT user provisioning (ensureUser)');
+  const userId = db.ensure_user('newuser@example.com');
+  assert(typeof userId === 'number', 'ensure_user should return user ID');
+  assert(db.user_exists('newuser@example.com'), 'User should exist after ensure_user');
+  console.log('✓ JIT user provisioning (ensure_user)');
 
-  // Test: ensureUser is idempotent
-  const userId2 = db.ensureUser('newuser@example.com');
-  assert(userId === userId2, 'ensureUser should return same ID for existing user');
-  console.log('✓ ensureUser is idempotent');
+  // Test: ensure_user is idempotent
+  const userId2 = db.ensure_user('newuser@example.com');
+  assert(userId === userId2, 'ensure_user should return same ID for existing user');
+  console.log('✓ ensure_user is idempotent');
 
   // Test: Add user
   db.add_user('another@example.com');
@@ -323,8 +323,8 @@ function testJwtFlowIntegration() {
   db.create_resource('corpus-special', 'corpus');
   db.create_resource('corpus-public', 'corpus');
 
-  db.createEntitlement('urn:nbn:fi:lb-2022031701@LBR', 'Language Bank Research Access');
-  db.createEntitlement('urn:nbn:fi:lb-2023050901@LBR', 'Special Collection Access');
+  db.create_entitlement('urn:nbn:fi:lb-2022031701@LBR', 'Language Bank Research Access');
+  db.create_entitlement('urn:nbn:fi:lb-2023050901@LBR', 'Special Collection Access');
 
   db.set_grant({ entitlementUrn: 'urn:nbn:fi:lb-2022031701@LBR', resourceName: 'corpus-research', level: 1 }); // READ
   db.set_grant({ entitlementUrn: 'urn:nbn:fi:lb-2023050901@LBR', resourceName: 'corpus-special', level: 2 }); // WRITE
@@ -363,12 +363,12 @@ function testJwtFlowIntegration() {
   console.log('✓ Overlapping permissions use MAX (highest wins)');
 
   // Test: JIT user provisioning in JWT flow
-  const newUserId = db.ensureUser('newuser@kielipankki.fi');
-  assert(typeof newUserId === 'number', 'ensureUser should return user ID');
+  const newUserId = db.ensure_user('newuser@kielipankki.fi');
+  assert(typeof newUserId === 'number', 'ensure_user should return user ID');
   assert(db.user_exists('newuser@kielipankki.fi'), 'User should be created');
 
-  const newUserId2 = db.ensureUser('newuser@kielipankki.fi');
-  assert(newUserId === newUserId2, 'ensureUser should be idempotent');
+  const newUserId2 = db.ensure_user('newuser@kielipankki.fi');
+  assert(newUserId === newUserId2, 'ensure_user should be idempotent');
   console.log('✓ JIT user provisioning works correctly');
 
   // Test: New user with entitlements but no direct grants

@@ -376,7 +376,7 @@ app.get('/jwt', (req, res) => {
     debugAuth('Academic status (ACA):', isAcademic);
 
     // JIT user provisioning - ensure user exists in database
-    auth_db.ensureUser(userSub);
+    auth_db.ensure_user(userSub);
 
     logger.info(`Issuing JWT for user: ${userEmail || userSub} (${entitlements.length} entitlements, ACA: ${isAcademic})`, 'JWT');
   }
@@ -561,7 +561,7 @@ app.delete('/resource/:resourcename', (req, res) => {
  */
 app.get('/admin/entitlements', requireAdminAuth, (req, res) => {
   try {
-    const entitlements = auth_db.listEntitlements();
+    const entitlements = auth_db.list_entitlements();
 
     debugAdmin('Listed entitlements:', entitlements.length);
     logger.info(`Listed ${entitlements.length} entitlements`, 'Admin');
@@ -588,7 +588,7 @@ app.get('/admin/entitlement/:urn', requireAdminAuth, (req, res) => {
     debugAdmin('Fetching entitlement:', urn);
 
     // Get entitlement metadata
-    const allEntitlements = auth_db.listEntitlements();
+    const allEntitlements = auth_db.list_entitlements();
     const entitlement = allEntitlements.find(e => e.urn === urn);
 
     if (!entitlement) {
@@ -599,7 +599,7 @@ app.get('/admin/entitlement/:urn', requireAdminAuth, (req, res) => {
     }
 
     // Get grants for this entitlement
-    const grants = auth_db.getGrantsForEntitlement(urn);
+    const grants = auth_db.get_grants_for_entitlement(urn);
 
     const result = {
       urn: entitlement.urn,
@@ -678,13 +678,13 @@ app.post('/admin/entitlement', requireAdminAuth, (req, res) => {
     }
 
     // Check if entitlement exists
-    const exists = auth_db.entitlementExists(urn);
+    const exists = auth_db.entitlement_exists(urn);
 
     // Create or update entitlement
     if (exists) {
-      auth_db.updateEntitlementDescription(urn, description);
+      auth_db.update_entitlement_description(urn, description);
     } else {
-      auth_db.createEntitlement(urn, description);
+      auth_db.create_entitlement(urn, description);
     }
 
     // Add grants if provided
@@ -731,7 +731,7 @@ app.delete('/admin/entitlement/:urn', requireAdminAuth, (req, res) => {
 
     debugAdmin('Deleting entitlement:', urn);
 
-    auth_db.deleteEntitlement(urn);
+    auth_db.delete_entitlement(urn);
 
     logger.info(`Deleted entitlement: ${urn}`, 'Admin');
 
