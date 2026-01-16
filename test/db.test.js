@@ -12,6 +12,10 @@ const Database = require('better-sqlite3');
 // Set test environment
 process.env.NODE_ENV = 'development';
 process.env.DB_PATH = path.join(__dirname, 'test.sqlite3');
+process.env.DEMO_USERS = JSON.stringify({
+  'demo@example.com': { password: 'password123' },
+  'tutkija@kielipankki.fi': { password: '123' }
+});
 
 const db = require('../src/db');
 const config = require('../src/config');
