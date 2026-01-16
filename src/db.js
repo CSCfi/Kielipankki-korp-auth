@@ -40,7 +40,7 @@ function create_db_if_missing() {
       CREATE TABLE USERS (
         user_id INTEGER PRIMARY KEY AUTOINCREMENT,
         identifier TEXT NOT NULL UNIQUE,
-        password TEXT,
+        password TEXT, -- this is only for the dev environment, no real passwords stored
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
