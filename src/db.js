@@ -386,6 +386,23 @@ function remove_grant({ userIdentifier, entitlementUrn, resourceName }) {
     }
 }
 
+/**
+ * Remove all grants for an entitlement
+ */
+function remove_all_grants_for_entitlement(entitlementUrn) {
+    const db = new Database(DB_PATH);
+
+    try {
+        const stmt = db.prepare(`
+      DELETE FROM GRANTS
+      WHERE entitlement_id = (SELECT entitlement_id FROM ENTITLEMENTS WHERE urn = ?)
+    `);
+        stmt.run(entitlementUrn);
+    } finally {
+        db.close();
+    }
+}
+
 function user_is_resource_admin(userIdentifier, resourcename) {
   const db = new Database(DB_PATH);
 
@@ -539,6 +556,7 @@ module.exports = {
     delete_user,
     set_grant,
     remove_grant,
+    remove_all_grants_for_entitlement,
     user_is_resource_admin,
     PERMISSIONS,
     // User management
