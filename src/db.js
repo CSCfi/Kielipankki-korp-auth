@@ -241,7 +241,7 @@ function create_resource(resource_name, resource_type) {
 
 function delete_resource(resource_name) {
     const db = new Database(DB_PATH);
-    
+
     try {
         const stmt = db.prepare('DELETE FROM RESOURCES WHERE resource_name = ?');
         stmt.run(resource_name);
