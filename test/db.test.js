@@ -165,6 +165,21 @@ function testGrantManagement() {
   const afterRemove = db.get_grants_for_entitlement('urn:nbn:fi:lb-2022031701@LBR');
   assert(afterRemove.length === 0, 'Grant should be removed');
   console.log('✓ Remove grant');
+
+  // Test: Remove all grants for entitlement
+  db.create_resource('corpus-a', 'corpus');
+  db.create_resource('corpus-b', 'corpus');
+  db.set_grant({ entitlementUrn: 'urn:nbn:fi:lb-2022031701@LBR', resourceName: 'corpus-a', level: 1 });
+  db.set_grant({ entitlementUrn: 'urn:nbn:fi:lb-2022031701@LBR', resourceName: 'corpus-b', level: 2 });
+  const beforeRemoveAll = db.get_grants_for_entitlement('urn:nbn:fi:lb-2022031701@LBR');
+  assert(beforeRemoveAll.length === 2, 'Should have 2 grants before remove all');
+  db.remove_all_grants_for_entitlement('urn:nbn:fi:lb-2022031701@LBR');
+  const afterRemoveAll = db.get_grants_for_entitlement('urn:nbn:fi:lb-2022031701@LBR');
+  assert(afterRemoveAll.length === 0, 'All grants should be removed');
+  // Verify user grant was not affected
+  const userScopeAfter = db.get_user_scope('demo@example.com', []);
+  assert(userScopeAfter.corpora['test-corpus'] === 3, 'User grant should not be affected');
+  console.log('✓ Remove all grants for entitlement');
 }
 
 // ============================================================================

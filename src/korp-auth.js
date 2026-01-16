@@ -637,11 +637,15 @@ app.get('/admin/entitlement/:urn', requireAdminAuth, (req, res) => {
  * Create or update an entitlement (with optional grants)
  * Requires X-API-Key header
  *
+ * If grants array is provided, it REPLACES all existing grants for this entitlement.
+ * To keep existing grants, omit the grants field entirely.
+ * To remove all grants, pass an empty array: "grants": []
+ *
  * Request body:
  * {
  *   "urn": "urn:nbn:fi:lb-123",
  *   "description": "Description text",
- *   "grants": [  // optional
+ *   "grants": [  // optional - if provided, replaces all existing grants
  *     {"resourceName": "corpus-1", "level": 1},
  *     {"resourceName": "corpus-2", "level": 2}
  *   ]
@@ -697,16 +701,20 @@ app.post('/admin/entitlement', requireAdminAuth, (req, res) => {
       auth_db.create_entitlement(urn, description);
     }
 
-    // Add grants if provided
-    let grantsAdded = 0;
-    if (grants && grants.length > 0) {
+    // Replace grants if provided (delete existing, then add new)
+    let grantsSet = 0;
+    if (grants) {
+      // First, remove all existing grants for this entitlement
+      auth_db.remove_all_grants_for_entitlement(urn);
+
+      // Then add the new grants
       for (const grant of grants) {
         auth_db.set_grant({
           entitlementUrn: urn,
           resourceName: grant.resourceName,
           level: grant.level
         });
-        grantsAdded++;
+        grantsSet++;
       }
     }
 
@@ -714,11 +722,11 @@ app.post('/admin/entitlement', requireAdminAuth, (req, res) => {
       urn,
       description,
       created: !exists,
-      grantsAdded
+      grantsSet
     };
 
     debugAdmin('Created/updated entitlement:', result);
-    logger.info(`${exists ? 'Updated' : 'Created'} entitlement: ${urn} (${grantsAdded} grants)`, 'Admin');
+    logger.info(`${exists ? 'Updated' : 'Created'} entitlement: ${urn} (${grantsSet} grants)`, 'Admin');
 
     res.status(exists ? 200 : 201).json(result);
   } catch (error) {
