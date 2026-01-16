@@ -485,10 +485,14 @@ app.post('/resource/:resourcename', (req, res) => {
     res.status(201).send(resourcename);
   } catch (error) {
     if (error instanceof auth_db.ResourceExistsError) {
-      return res.status(400).json({ error: 'resource already exists'});
-    } else {
+      return res.status(400).json({ error: 'resource_exists', message: 'Resource already exists' });
+    } else if (error instanceof jwt.JsonWebTokenError) {
+      // Covers JsonWebTokenError, TokenExpiredError, NotBeforeError
       logger.warn(`Invalid auth token for resource creation: ${error.message}`, 'Resource');
-      return res.status(401).json({ error: 'invalid auth token' });
+      return res.status(401).json({ error: 'invalid_token', message: error.message });
+    } else {
+      logger.error(`Unexpected error creating resource: ${error.message}`, 'Resource');
+      return res.status(500).json({ error: 'internal_error', message: 'Failed to create resource' });
     }
   }
 });
@@ -545,8 +549,14 @@ app.delete('/resource/:resourcename', (req, res) => {
     // 204 No Content
     return res.status(204).send();
   } catch (error) {
-    logger.warn(`Invalid auth token for resource deletion: ${error.message}`, 'Resource');
-    return res.status(401).json({ error: 'invalid auth token' });
+    if (error instanceof jwt.JsonWebTokenError) {
+      // Covers JsonWebTokenError, TokenExpiredError, NotBeforeError
+      logger.warn(`Invalid auth token for resource deletion: ${error.message}`, 'Resource');
+      return res.status(401).json({ error: 'invalid_token', message: error.message });
+    } else {
+      logger.error(`Unexpected error deleting resource: ${error.message}`, 'Resource');
+      return res.status(500).json({ error: 'internal_error', message: 'Failed to delete resource' });
+    }
   }
 });
 
