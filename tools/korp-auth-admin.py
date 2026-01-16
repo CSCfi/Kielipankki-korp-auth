@@ -83,6 +83,31 @@ class KorpAuthClient:
         )
         response.raise_for_status()
 
+    def list_resources(self) -> List[dict]:
+        """List all resources"""
+        response = requests.get(
+            f"{self.base_url}/admin/resources", headers=self.headers
+        )
+        response.raise_for_status()
+        return response.json()["resources"]
+
+    def create_resource(self, name: str, resource_type: str) -> dict:
+        """Create a new resource"""
+        data = {"name": name, "type": resource_type}
+        response = requests.post(
+            f"{self.base_url}/admin/resource", headers=self.headers, json=data
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def delete_resource(self, name: str):
+        """Delete a resource and all its grants"""
+        response = requests.delete(
+            f'{self.base_url}/admin/resource/{requests.utils.quote(name, safe="")}',
+            headers=self.headers,
+        )
+        response.raise_for_status()
+
 
 def parse_tsv_line(line: str) -> Optional[Tuple[str, str, str]]:
     """
@@ -346,6 +371,73 @@ def cmd_delete_grant(args, client: KorpAuthClient):
         return 1
 
 
+def cmd_list_resources(args, client: KorpAuthClient):
+    """List resources"""
+    try:
+        resources = client.list_resources()
+    except requests.exceptions.HTTPError as e:
+        print(f"Error: {e.response.status_code} - {e.response.text}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    if not resources:
+        print("No resources found")
+        return 0
+
+    print(f"Found {len(resources)} resources:\n")
+
+    for res in resources:
+        print(f"Name: {res['resource_name']}")
+        print(f"  Type: {res['type']}")
+        print(f"  Grants: {res['grant_count']}")
+        print()
+
+    return 0
+
+
+def cmd_add_resource(args, client: KorpAuthClient):
+    """Add a new resource"""
+    try:
+        result = client.create_resource(args.name, args.type)
+        print(f"✓ Created resource: {result['name']} (type: {result['type']})")
+        return 0
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 409:
+            print(f"Error: Resource '{args.name}' already exists", file=sys.stderr)
+        else:
+            print(
+                f"Error: {e.response.status_code} - {e.response.text}", file=sys.stderr
+            )
+        return 1
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_delete_resource(args, client: KorpAuthClient):
+    """Delete resource"""
+    if not args.force:
+        confirm = input(
+            f"Delete resource '{args.name}' and all its grants? [y/N]: "
+        )
+        if confirm.lower() != "y":
+            print("Cancelled")
+            return 0
+
+    try:
+        client.delete_resource(args.name)
+        print(f"✓ Deleted resource: {args.name}")
+        return 0
+    except requests.exceptions.HTTPError as e:
+        print(f"Error: {e.response.status_code} - {e.response.text}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Korp Auth Admin Tool - Manage entitlements and grants",
@@ -369,6 +461,18 @@ Examples:
 
   # Add single grant
   %(prog)s add-grant "urn:nbn:fi:lb-123@LBR" corpus-name --level 1
+
+  # List all resources
+  %(prog)s list-resources
+
+  # Add a new resource (corpus by default)
+  %(prog)s add-resource my-corpus
+
+  # Add a metadata resource
+  %(prog)s add-resource my-metadata --type metadata
+
+  # Delete a resource
+  %(prog)s delete-resource my-corpus
 
 Environment variables:
   KORP_AUTH_URL      Base URL for korp-auth service (default: http://localhost)
@@ -458,6 +562,26 @@ API Key Priority:
     del_grant_parser.add_argument("urn", help="Entitlement URN")
     del_grant_parser.add_argument("resource", help="Resource name")
 
+    # List resources command
+    subparsers.add_parser("list-resources", help="List all resources")
+
+    # Add resource command
+    add_res_parser = subparsers.add_parser("add-resource", help="Add a new resource")
+    add_res_parser.add_argument("name", help="Resource name")
+    add_res_parser.add_argument(
+        "--type",
+        default="corpus",
+        choices=["corpus", "metadata", "other"],
+        help="Resource type (default: corpus)",
+    )
+
+    # Delete resource command
+    del_res_parser = subparsers.add_parser("delete-resource", help="Delete resource")
+    del_res_parser.add_argument("name", help="Resource name")
+    del_res_parser.add_argument(
+        "-f", "--force", action="store_true", help="Skip confirmation prompt"
+    )
+
     args = parser.parse_args()
 
     if not args.command:
@@ -507,6 +631,9 @@ API Key Priority:
         "add-grant": cmd_add_grant,
         "delete-entitlement": cmd_delete_entitlement,
         "delete-grant": cmd_delete_grant,
+        "list-resources": cmd_list_resources,
+        "add-resource": cmd_add_resource,
+        "delete-resource": cmd_delete_resource,
     }
 
     return commands[args.command](args, client)
