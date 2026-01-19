@@ -109,7 +109,7 @@ function testEntitlementManagement() {
   const entitlements = db.list_entitlements();
   assert(Array.isArray(entitlements), 'list_entitlements should return array');
   assert(entitlements.length === 1, 'Should have 1 entitlement');
-  assert(entitlements[0].urn === 'urn:nbn:fi:lb-2022031701@LBR', 'Should return correct URN');
+  assert(entitlements[0].identifier === 'urn:nbn:fi:lb-2022031701@LBR', 'Should return correct URN');
   assert(entitlements[0].description === 'Test Entitlement', 'Should return correct description');
   console.log('✓ List entitlements');
 
@@ -140,7 +140,7 @@ function testGrantManagement() {
   db.create_entitlement('urn:nbn:fi:lb-2022031701@LBR', 'Test Entitlement');
 
   // Test: Set grant for entitlement
-  db.set_grant({ entitlementUrn: 'urn:nbn:fi:lb-2022031701@LBR', resourceName: 'test-corpus', level: 1 });
+  db.set_grant({ entitlementIdentifier: 'urn:nbn:fi:lb-2022031701@LBR', resourceName: 'test-corpus', level: 1 });
   const grants = db.get_grants_for_entitlement('urn:nbn:fi:lb-2022031701@LBR');
   assert(grants.length === 1, 'Should have 1 grant');
   assert(grants[0].resource_name === 'test-corpus', 'Grant should be for correct resource');
@@ -148,7 +148,7 @@ function testGrantManagement() {
   console.log('✓ Set grant for entitlement');
 
   // Test: Upsert grant (update existing)
-  db.set_grant({ entitlementUrn: 'urn:nbn:fi:lb-2022031701@LBR', resourceName: 'test-corpus', level: 2 });
+  db.set_grant({ entitlementIdentifier: 'urn:nbn:fi:lb-2022031701@LBR', resourceName: 'test-corpus', level: 2 });
   const updated = db.get_grants_for_entitlement('urn:nbn:fi:lb-2022031701@LBR');
   assert(updated.length === 1, 'Should still have 1 grant (no duplicate)');
   assert(updated[0].permission_level === 2, 'Permission level should be updated');
@@ -161,7 +161,7 @@ function testGrantManagement() {
   console.log('✓ Set grant for user');
 
   // Test: Remove grant
-  db.remove_grant({ entitlementUrn: 'urn:nbn:fi:lb-2022031701@LBR', resourceName: 'test-corpus' });
+  db.remove_grant({ entitlementIdentifier: 'urn:nbn:fi:lb-2022031701@LBR', resourceName: 'test-corpus' });
   const afterRemove = db.get_grants_for_entitlement('urn:nbn:fi:lb-2022031701@LBR');
   assert(afterRemove.length === 0, 'Grant should be removed');
   console.log('✓ Remove grant');
@@ -169,8 +169,8 @@ function testGrantManagement() {
   // Test: Remove all grants for entitlement
   db.create_resource('corpus-a', 'corpus');
   db.create_resource('corpus-b', 'corpus');
-  db.set_grant({ entitlementUrn: 'urn:nbn:fi:lb-2022031701@LBR', resourceName: 'corpus-a', level: 1 });
-  db.set_grant({ entitlementUrn: 'urn:nbn:fi:lb-2022031701@LBR', resourceName: 'corpus-b', level: 2 });
+  db.set_grant({ entitlementIdentifier: 'urn:nbn:fi:lb-2022031701@LBR', resourceName: 'corpus-a', level: 1 });
+  db.set_grant({ entitlementIdentifier: 'urn:nbn:fi:lb-2022031701@LBR', resourceName: 'corpus-b', level: 2 });
   const beforeRemoveAll = db.get_grants_for_entitlement('urn:nbn:fi:lb-2022031701@LBR');
   assert(beforeRemoveAll.length === 2, 'Should have 2 grants before remove all');
   db.remove_all_grants_for_entitlement('urn:nbn:fi:lb-2022031701@LBR');
@@ -200,9 +200,9 @@ function testPermissionAggregation() {
   db.create_entitlement('urn:nbn:fi:lb-2023050901@LBR', 'Special Access');
 
   // Set up conflicting permissions
-  db.set_grant({ entitlementUrn: 'urn:nbn:fi:lb-2022031701@LBR', resourceName: 'corpus-1', level: 1 }); // READ
-  db.set_grant({ entitlementUrn: 'urn:nbn:fi:lb-2023050901@LBR', resourceName: 'corpus-1', level: 3 }); // ADMIN
-  db.set_grant({ entitlementUrn: 'urn:nbn:fi:lb-2022031701@LBR', resourceName: 'corpus-2', level: 2 }); // WRITE
+  db.set_grant({ entitlementIdentifier: 'urn:nbn:fi:lb-2022031701@LBR', resourceName: 'corpus-1', level: 1 }); // READ
+  db.set_grant({ entitlementIdentifier: 'urn:nbn:fi:lb-2023050901@LBR', resourceName: 'corpus-1', level: 3 }); // ADMIN
+  db.set_grant({ entitlementIdentifier: 'urn:nbn:fi:lb-2022031701@LBR', resourceName: 'corpus-2', level: 2 }); // WRITE
 
   // Set user-specific grant
   db.set_grant({ userIdentifier: 'demo@example.com', resourceName: 'metadata-1', level: 2 }); // WRITE
@@ -316,7 +316,7 @@ function testResourceManagement() {
   // Test: list_resources includes grant counts
   db.set_grant({ userIdentifier: 'demo@example.com', resourceName: 'new-corpus', level: 1 });
   db.create_entitlement('urn:test@LBR', 'Test');
-  db.set_grant({ entitlementUrn: 'urn:test@LBR', resourceName: 'new-corpus', level: 2 });
+  db.set_grant({ entitlementIdentifier: 'urn:test@LBR', resourceName: 'new-corpus', level: 2 });
   const resourcesWithGrants = db.list_resources();
   const corpusWithGrants = resourcesWithGrants.find(r => r.resource_name === 'new-corpus');
   assert(corpusWithGrants.grant_count === 2, 'Should count grants correctly');
@@ -372,8 +372,8 @@ function testJwtFlowIntegration() {
   db.create_entitlement('urn:nbn:fi:lb-2022031701@LBR', 'Language Bank Research Access');
   db.create_entitlement('urn:nbn:fi:lb-2023050901@LBR', 'Special Collection Access');
 
-  db.set_grant({ entitlementUrn: 'urn:nbn:fi:lb-2022031701@LBR', resourceName: 'corpus-research', level: 1 }); // READ
-  db.set_grant({ entitlementUrn: 'urn:nbn:fi:lb-2023050901@LBR', resourceName: 'corpus-special', level: 2 }); // WRITE
+  db.set_grant({ entitlementIdentifier: 'urn:nbn:fi:lb-2022031701@LBR', resourceName: 'corpus-research', level: 1 }); // READ
+  db.set_grant({ entitlementIdentifier: 'urn:nbn:fi:lb-2023050901@LBR', resourceName: 'corpus-special', level: 2 }); // WRITE
 
   // Test: User with multiple entitlements
   const scope1 = db.get_user_scope('demo@example.com', [
