@@ -31,20 +31,20 @@ class KorpAuthClient:
         response.raise_for_status()
         return response.json()["entitlements"]
 
-    def get_entitlement(self, urn: str) -> dict:
+    def get_entitlement(self, identifier: str) -> dict:
         """Get single entitlement with grants"""
         response = requests.get(
-            f'{self.base_url}/admin/entitlement/{requests.utils.quote(urn, safe="")}',
+            f'{self.base_url}/admin/entitlement/{requests.utils.quote(identifier, safe="")}',
             headers=self.headers,
         )
         response.raise_for_status()
         return response.json()
 
     def create_entitlement(
-        self, urn: str, description: str, grants: Optional[List[dict]] = None
+        self, identifier: str, description: str, grants: Optional[List[dict]] = None
     ) -> dict:
         """Create or update entitlement with optional grants"""
-        data = {"urn": urn, "description": description}
+        data = {"identifier": identifier, "description": description}
         if grants:
             data["grants"] = grants
 
@@ -54,18 +54,18 @@ class KorpAuthClient:
         response.raise_for_status()
         return response.json()
 
-    def delete_entitlement(self, urn: str):
+    def delete_entitlement(self, identifier: str):
         """Delete entitlement and all its grants"""
         response = requests.delete(
-            f'{self.base_url}/admin/entitlement/{requests.utils.quote(urn, safe="")}',
+            f'{self.base_url}/admin/entitlement/{requests.utils.quote(identifier, safe="")}',
             headers=self.headers,
         )
         response.raise_for_status()
 
-    def add_grant(self, entitlement_urn: str, resource_name: str, level: int) -> dict:
+    def add_grant(self, entitlement_identifier: str, resource_name: str, level: int) -> dict:
         """Add or update single grant"""
         data = {
-            "entitlementUrn": entitlement_urn,
+            "entitlementIdentifier": entitlement_identifier,
             "resourceName": resource_name,
             "level": level,
         }
@@ -75,9 +75,9 @@ class KorpAuthClient:
         response.raise_for_status()
         return response.json()
 
-    def delete_grant(self, entitlement_urn: str, resource_name: str):
+    def delete_grant(self, entitlement_identifier: str, resource_name: str):
         """Delete single grant"""
-        params = {"entitlementUrn": entitlement_urn, "resourceName": resource_name}
+        params = {"entitlementIdentifier": entitlement_identifier, "resourceName": resource_name}
         response = requests.delete(
             f"{self.base_url}/admin/grant", headers=self.headers, params=params
         )
@@ -111,9 +111,9 @@ class KorpAuthClient:
 
 def parse_tsv_line(line: str) -> Optional[Tuple[str, str, str]]:
     """
-    Parse a TSV line in format: URN<TAB>RESOURCE_NAME[<TAB>DESCRIPTION]
+    Parse a TSV line in format: IDENTIFIER<TAB>RESOURCE_NAME[<TAB>DESCRIPTION]
 
-    Returns: (urn, resource_name, description) or None if line should be skipped
+    Returns: (identifier, resource_name, description) or None if line should be skipped
     Description is empty string if not provided (third column optional)
     """
     line = line.strip()
@@ -131,43 +131,43 @@ def parse_tsv_line(line: str) -> Optional[Tuple[str, str, str]]:
         )
         return None
 
-    urn = parts[0].strip()
+    identifier = parts[0].strip()
     resource_name = parts[1].strip()
     description = parts[2].strip() if len(parts) >= 3 else ""
 
-    if not urn or not resource_name:
+    if not identifier or not resource_name:
         print(
-            f"Warning: Skipping line with empty URN or resource name: {line}",
+            f"Warning: Skipping line with empty identifier or resource name: {line}",
             file=sys.stderr,
         )
         return None
 
-    return (urn, resource_name, description)
+    return (identifier, resource_name, description)
 
 
 def read_tsv_file(filepath: str) -> dict:
     """
-    Read TSV file and group grants by entitlement URN
+    Read TSV file and group grants by entitlement identifier
 
-    Returns: dict mapping URN -> (resource_list, description)
-    If same URN appears multiple times, keeps first non-empty description
+    Returns: dict mapping identifier -> (resource_list, description)
+    If same identifier appears multiple times, keeps first non-empty description
     """
-    grants_by_urn = defaultdict(lambda: ([], ""))
+    grants_by_identifier = defaultdict(lambda: ([], ""))
 
     with open(filepath, "r", encoding="utf-8") as f:
         for line_num, line in enumerate(f, 1):
             result = parse_tsv_line(line)
             if result:
-                urn, resource_name, description = result
-                resources, existing_desc = grants_by_urn[urn]
+                identifier, resource_name, description = result
+                resources, existing_desc = grants_by_identifier[identifier]
                 resources.append(resource_name)
                 # Keep first non-empty description
                 if description and not existing_desc:
-                    grants_by_urn[urn] = (resources, description)
+                    grants_by_identifier[identifier] = (resources, description)
                 else:
-                    grants_by_urn[urn] = (resources, existing_desc)
+                    grants_by_identifier[identifier] = (resources, existing_desc)
 
-    return dict(grants_by_urn)
+    return dict(grants_by_identifier)
 
 
 def cmd_import(args, client: KorpAuthClient):
@@ -175,7 +175,7 @@ def cmd_import(args, client: KorpAuthClient):
     print(f"Reading from: {args.file}")
 
     try:
-        grants_by_urn = read_tsv_file(args.file)
+        grants_by_identifier = read_tsv_file(args.file)
     except FileNotFoundError:
         print(f"Error: File not found: {args.file}", file=sys.stderr)
         return 1
@@ -183,7 +183,7 @@ def cmd_import(args, client: KorpAuthClient):
         print(f"Error reading file: {e}", file=sys.stderr)
         return 1
 
-    print(f"Found {len(grants_by_urn)} unique entitlements")
+    print(f"Found {len(grants_by_identifier)} unique entitlements")
 
     # Default permission level
     level = args.level
@@ -191,8 +191,8 @@ def cmd_import(args, client: KorpAuthClient):
     success_count = 0
     error_count = 0
 
-    for urn, (resources, tsv_description) in grants_by_urn.items():
-        print(f"\nProcessing: {urn} ({len(resources)} grants)")
+    for identifier, (resources, tsv_description) in grants_by_identifier.items():
+        print(f"\nProcessing: {identifier} ({len(resources)} grants)")
 
         # Use TSV description if provided, otherwise fall back to --description argument, otherwise empty
         description = tsv_description or args.description or ""
@@ -201,9 +201,9 @@ def cmd_import(args, client: KorpAuthClient):
         grants = [{"resourceName": res, "level": level} for res in resources]
 
         try:
-            result = client.create_entitlement(urn, description, grants)
+            result = client.create_entitlement(identifier, description, grants)
             status = "Created" if result["created"] else "Updated"
-            print(f"  ✓ {status} entitlement with {result['grantsAdded']} grants")
+            print(f"  ✓ {status} entitlement with {result['grantsSet']} grants")
             success_count += 1
         except requests.exceptions.HTTPError as e:
             print(
@@ -244,7 +244,7 @@ def cmd_list(args, client: KorpAuthClient):
     print(f"Found {len(entitlements)} entitlements:\n")
 
     for ent in entitlements:
-        print(f"URN: {ent['urn']}")
+        print(f"Identifier: {ent['identifier']}")
         print(f"  Description: {ent['description']}")
         print(f"  Grants: {ent['grant_count']}")
         print(f"  Created: {ent['created_at']}")
@@ -252,7 +252,7 @@ def cmd_list(args, client: KorpAuthClient):
         if args.verbose:
             # Fetch full details including grants
             try:
-                details = client.get_entitlement(ent["urn"])
+                details = client.get_entitlement(ent["identifier"])
                 if details["grants"]:
                     print(f"  Resources:")
                     for grant in details["grants"]:
@@ -284,12 +284,12 @@ def cmd_export(args, client: KorpAuthClient):
     for ent in entitlements:
         # Fetch full details to get grants
         try:
-            details = client.get_entitlement(ent["urn"])
+            details = client.get_entitlement(ent["identifier"])
             for grant in details["grants"]:
-                lines.append(f"{ent['urn']}\t{grant['resource_name']}")
+                lines.append(f"{ent['identifier']}\t{grant['resource_name']}")
         except Exception as e:
             print(
-                f"Warning: Could not fetch grants for {ent['urn']}: {e}",
+                f"Warning: Could not fetch grants for {ent['identifier']}: {e}",
                 file=sys.stderr,
             )
 
@@ -309,9 +309,9 @@ def cmd_export(args, client: KorpAuthClient):
 def cmd_add_entitlement(args, client: KorpAuthClient):
     """Add or update single entitlement"""
     try:
-        result = client.create_entitlement(args.urn, args.description)
+        result = client.create_entitlement(args.identifier, args.description)
         status = "Created" if result["created"] else "Updated"
-        print(f"✓ {status} entitlement: {result['urn']}")
+        print(f"✓ {status} entitlement: {result['identifier']}")
         return 0
     except requests.exceptions.HTTPError as e:
         print(f"Error: {e.response.status_code} - {e.response.text}", file=sys.stderr)
@@ -324,9 +324,9 @@ def cmd_add_entitlement(args, client: KorpAuthClient):
 def cmd_add_grant(args, client: KorpAuthClient):
     """Add or update single grant"""
     try:
-        result = client.add_grant(args.urn, args.resource, args.level)
+        result = client.add_grant(args.identifier, args.resource, args.level)
         print(
-            f"✓ Added grant: {result['entitlementUrn']} -> {result['resourceName']} (level {result['level']})"
+            f"✓ Added grant: {result['entitlementIdentifier']} -> {result['resourceName']} (level {result['level']})"
         )
         return 0
     except requests.exceptions.HTTPError as e:
@@ -340,14 +340,14 @@ def cmd_add_grant(args, client: KorpAuthClient):
 def cmd_delete_entitlement(args, client: KorpAuthClient):
     """Delete entitlement"""
     if not args.force:
-        confirm = input(f"Delete entitlement '{args.urn}' and all its grants? [y/N]: ")
+        confirm = input(f"Delete entitlement '{args.identifier}' and all its grants? [y/N]: ")
         if confirm.lower() != "y":
             print("Cancelled")
             return 0
 
     try:
-        client.delete_entitlement(args.urn)
-        print(f"✓ Deleted entitlement: {args.urn}")
+        client.delete_entitlement(args.identifier)
+        print(f"✓ Deleted entitlement: {args.identifier}")
         return 0
     except requests.exceptions.HTTPError as e:
         print(f"Error: {e.response.status_code} - {e.response.text}", file=sys.stderr)
@@ -360,8 +360,8 @@ def cmd_delete_entitlement(args, client: KorpAuthClient):
 def cmd_delete_grant(args, client: KorpAuthClient):
     """Delete single grant"""
     try:
-        client.delete_grant(args.urn, args.resource)
-        print(f"✓ Deleted grant: {args.urn} -> {args.resource}")
+        client.delete_grant(args.identifier, args.resource)
+        print(f"✓ Deleted grant: {args.identifier} -> {args.resource}")
         return 0
     except requests.exceptions.HTTPError as e:
         print(f"Error: {e.response.status_code} - {e.response.text}", file=sys.stderr)
@@ -462,6 +462,9 @@ Examples:
   # Add single grant
   %(prog)s add-grant "urn:nbn:fi:lb-123@LBR" corpus-name --level 1
 
+  # Delete entitlement
+  %(prog)s delete-entitlement "urn:nbn:fi:lb-123@LBR"
+
   # List all resources
   %(prog)s list-resources
 
@@ -533,12 +536,12 @@ API Key Priority:
     add_ent_parser = subparsers.add_parser(
         "add-entitlement", help="Add or update entitlement"
     )
-    add_ent_parser.add_argument("urn", help="Entitlement URN")
+    add_ent_parser.add_argument("identifier", help="Entitlement identifier (e.g. URN)")
     add_ent_parser.add_argument("description", help="Description")
 
     # Add grant command
     add_grant_parser = subparsers.add_parser("add-grant", help="Add or update grant")
-    add_grant_parser.add_argument("urn", help="Entitlement URN")
+    add_grant_parser.add_argument("identifier", help="Entitlement identifier (e.g. URN)")
     add_grant_parser.add_argument("resource", help="Resource name")
     add_grant_parser.add_argument(
         "--level",
@@ -552,14 +555,14 @@ API Key Priority:
     del_ent_parser = subparsers.add_parser(
         "delete-entitlement", help="Delete entitlement"
     )
-    del_ent_parser.add_argument("urn", help="Entitlement URN")
+    del_ent_parser.add_argument("identifier", help="Entitlement identifier (e.g. URN)")
     del_ent_parser.add_argument(
         "-f", "--force", action="store_true", help="Skip confirmation prompt"
     )
 
     # Delete grant command
     del_grant_parser = subparsers.add_parser("delete-grant", help="Delete grant")
-    del_grant_parser.add_argument("urn", help="Entitlement URN")
+    del_grant_parser.add_argument("identifier", help="Entitlement identifier (e.g. URN)")
     del_grant_parser.add_argument("resource", help="Resource name")
 
     # List resources command

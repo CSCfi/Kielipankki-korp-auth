@@ -50,13 +50,13 @@ function create_db_if_missing() {
         db.exec(`
       CREATE TABLE ENTITLEMENTS (
         entitlement_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        urn TEXT NOT NULL UNIQUE,
+        identifier TEXT NOT NULL UNIQUE,
         description TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
-        db.exec('CREATE INDEX idx_entitlements_urn ON ENTITLEMENTS(urn)');
+        db.exec('CREATE INDEX idx_entitlements_identifier ON ENTITLEMENTS(identifier)');
 
         // Create RESOURCES table
         db.exec(`
@@ -144,10 +144,10 @@ function get_user_scope(userIdentifier, entitlements = []) {
 
         // Add entitlement lookups if provided
         if (entitlements.length > 0) {
-            const urnPlaceholders = entitlements.map(() => '?').join(',');
+            const entitlementPlaceholders = entitlements.map(() => '?').join(',');
             query += `
         OR g.entitlement_id IN (
-          SELECT entitlement_id FROM ENTITLEMENTS WHERE urn IN (${urnPlaceholders})
+          SELECT entitlement_id FROM ENTITLEMENTS WHERE identifier IN (${entitlementPlaceholders})
         )
       `;
             params.push(...entitlements);
@@ -307,19 +307,19 @@ function delete_user(identifier) {
 
 /**
  * Set grant for either a user or an entitlement
- * @param {object} options - {userIdentifier, entitlementUrn, resourceName, level}
+ * @param {object} options - {userIdentifier, entitlementIdentifier, resourceName, level}
  */
-function set_grant({ userIdentifier, entitlementUrn, resourceName, level }) {
+function set_grant({ userIdentifier, entitlementIdentifier, resourceName, level }) {
     if (![1, 2, 3].includes(level)) {
         throw new Error('Invalid permission level. Must be 1 (READ), 2 (WRITE), or 3 (ADMIN)');
     }
 
-    if (!userIdentifier && !entitlementUrn) {
-        throw new Error('Must specify either userIdentifier or entitlementUrn');
+    if (!userIdentifier && !entitlementIdentifier) {
+        throw new Error('Must specify either userIdentifier or entitlementIdentifier');
     }
 
-    if (userIdentifier && entitlementUrn) {
-        throw new Error('Cannot specify both userIdentifier and entitlementUrn');
+    if (userIdentifier && entitlementIdentifier) {
+        throw new Error('Cannot specify both userIdentifier and entitlementIdentifier');
     }
 
     const db = new Database(DB_PATH);
@@ -341,14 +341,14 @@ function set_grant({ userIdentifier, entitlementUrn, resourceName, level }) {
             const stmt = db.prepare(`
         INSERT INTO GRANTS (entitlement_id, resource_name, permission_level)
         VALUES (
-          (SELECT entitlement_id FROM ENTITLEMENTS WHERE urn = ?),
+          (SELECT entitlement_id FROM ENTITLEMENTS WHERE identifier = ?),
           ?, ?
         )
         ON CONFLICT(entitlement_id, resource_name)
         DO UPDATE SET permission_level = excluded.permission_level
         WHERE entitlement_id IS NOT NULL
       `);
-            stmt.run(entitlementUrn, resourceName, level);
+            stmt.run(entitlementIdentifier, resourceName, level);
         }
     } finally {
         db.close();
@@ -358,9 +358,9 @@ function set_grant({ userIdentifier, entitlementUrn, resourceName, level }) {
 /**
  * Remove grant for either a user or an entitlement
  */
-function remove_grant({ userIdentifier, entitlementUrn, resourceName }) {
-    if (!userIdentifier && !entitlementUrn) {
-        throw new Error('Must specify either userIdentifier or entitlementUrn');
+function remove_grant({ userIdentifier, entitlementIdentifier, resourceName }) {
+    if (!userIdentifier && !entitlementIdentifier) {
+        throw new Error('Must specify either userIdentifier or entitlementIdentifier');
     }
 
     const db = new Database(DB_PATH);
@@ -376,10 +376,10 @@ function remove_grant({ userIdentifier, entitlementUrn, resourceName }) {
         } else {
             const stmt = db.prepare(`
         DELETE FROM GRANTS
-        WHERE entitlement_id = (SELECT entitlement_id FROM ENTITLEMENTS WHERE urn = ?)
+        WHERE entitlement_id = (SELECT entitlement_id FROM ENTITLEMENTS WHERE identifier = ?)
           AND resource_name = ?
       `);
-            stmt.run(entitlementUrn, resourceName);
+            stmt.run(entitlementIdentifier, resourceName);
         }
     } finally {
         db.close();
@@ -389,15 +389,15 @@ function remove_grant({ userIdentifier, entitlementUrn, resourceName }) {
 /**
  * Remove all grants for an entitlement
  */
-function remove_all_grants_for_entitlement(entitlementUrn) {
+function remove_all_grants_for_entitlement(entitlementIdentifier) {
     const db = new Database(DB_PATH);
 
     try {
         const stmt = db.prepare(`
       DELETE FROM GRANTS
-      WHERE entitlement_id = (SELECT entitlement_id FROM ENTITLEMENTS WHERE urn = ?)
+      WHERE entitlement_id = (SELECT entitlement_id FROM ENTITLEMENTS WHERE identifier = ?)
     `);
-        stmt.run(entitlementUrn);
+        stmt.run(entitlementIdentifier);
     } finally {
         db.close();
     }
@@ -448,24 +448,24 @@ function ensure_user(identifier) {
 // Entitlement Management
 // ============================================================================
 
-function create_entitlement(urn, description = null) {
+function create_entitlement(identifier, description = null) {
     const db = new Database(DB_PATH);
 
     try {
-        const stmt = db.prepare('INSERT INTO ENTITLEMENTS (urn, description) VALUES (?, ?)');
-        const info = stmt.run(urn, description);
+        const stmt = db.prepare('INSERT INTO ENTITLEMENTS (identifier, description) VALUES (?, ?)');
+        const info = stmt.run(identifier, description);
         return info.lastInsertRowid;
     } finally {
         db.close();
     }
 }
 
-function entitlement_exists(urn) {
+function entitlement_exists(identifier) {
     const db = new Database(DB_PATH);
 
     try {
-        const stmt = db.prepare('SELECT 1 FROM ENTITLEMENTS WHERE urn = ? LIMIT 1');
-        const result = stmt.get(urn);
+        const stmt = db.prepare('SELECT 1 FROM ENTITLEMENTS WHERE identifier = ? LIMIT 1');
+        const result = stmt.get(identifier);
         return result !== undefined;
     } finally {
         db.close();
@@ -479,7 +479,7 @@ function list_entitlements() {
         const stmt = db.prepare(`
       SELECT
         e.entitlement_id,
-        e.urn,
+        e.identifier,
         e.description,
         e.created_at,
         e.updated_at,
@@ -495,34 +495,34 @@ function list_entitlements() {
     }
 }
 
-function update_entitlement_description(urn, description) {
+function update_entitlement_description(identifier, description) {
     const db = new Database(DB_PATH);
 
     try {
         const stmt = db.prepare(`
       UPDATE ENTITLEMENTS
       SET description = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE urn = ?
+      WHERE identifier = ?
     `);
-        stmt.run(description, urn);
+        stmt.run(description, identifier);
     } finally {
         db.close();
     }
 }
 
-function delete_entitlement(urn) {
+function delete_entitlement(identifier) {
     const db = new Database(DB_PATH);
 
     try {
-        const stmt = db.prepare('DELETE FROM ENTITLEMENTS WHERE urn = ?');
-        const result = stmt.run(urn);
+        const stmt = db.prepare('DELETE FROM ENTITLEMENTS WHERE identifier = ?');
+        const result = stmt.run(identifier);
         return result.changes > 0;
     } finally {
         db.close();
     }
 }
 
-function get_grants_for_entitlement(urn) {
+function get_grants_for_entitlement(identifier) {
     const db = new Database(DB_PATH);
 
     try {
@@ -531,10 +531,10 @@ function get_grants_for_entitlement(urn) {
       FROM GRANTS g
       JOIN ENTITLEMENTS e ON g.entitlement_id = e.entitlement_id
       JOIN RESOURCES r ON g.resource_name = r.resource_name
-      WHERE e.urn = ?
+      WHERE e.identifier = ?
       ORDER BY r.type, g.resource_name
     `);
-        return stmt.all(urn);
+        return stmt.all(identifier);
     } finally {
         db.close();
     }
