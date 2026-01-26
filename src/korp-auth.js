@@ -428,6 +428,7 @@ app.get('/jwt', (req, res) => {
     name: userName,
     idp: config.isProduction ? 'https://aai.kielipankki.fi' : 'kp-auth-local',
     ACA: isAcademic,
+    ACA_Fi: isAcademic && userSub.endsWith('.fi'),
     scope: scope,
     levels: auth_db.PERMISSIONS,
     exp: Math.floor(Date.now() / 1000) + 3600, // 1 hour
