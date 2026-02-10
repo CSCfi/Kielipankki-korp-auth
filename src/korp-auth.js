@@ -92,7 +92,7 @@ function parseAffiliations(headerValue) {
 }
 
 /**
- * Check if user has academic (ACA) status
+ * Check if user is in special classes like having academic (ACA) status
  * Based on eduPersonAffiliation, eduPersonScopedAffiliation, and eduPersonEntitlement claims
  *
  * Academic status is granted if ANY of these conditions are met:
@@ -101,7 +101,7 @@ function parseAffiliations(headerValue) {
  * 3. Other scoped affiliation: (member|student|faculty|employee)@domain (but NOT member@clarin.eu)
  * 4. LBR ACA entitlement: urn:nbn:fi:lb-2016110710@LBR
  */
-function checkAcademicStatus(affiliations, scopedAffiliations, entitlements) {
+function getUserClasses(affiliations, scopedAffiliations, entitlements) {
   const debugAca = debug('korp-auth:aca');
 
   // Parse all inputs
@@ -109,7 +109,7 @@ function checkAcademicStatus(affiliations, scopedAffiliations, entitlements) {
   const scopedAffs = parseAffiliations(scopedAffiliations);
   const ents = parseEntitlements(entitlements);
 
-  debugAca('Checking ACA status:', {
+  debugAca('Checking user classes:', {
     unscopedAffiliations: unscopedAffs,
     scopedAffiliations: scopedAffs,
     entitlements: ents
@@ -118,11 +118,16 @@ function checkAcademicStatus(affiliations, scopedAffiliations, entitlements) {
   // Academic affiliation values
   const academicAffiliations = ['member', 'student', 'faculty', 'employee'];
 
+  const userClasses = [];
+  let hasACA = false;
+  let hasACAFi = false;
+
   // 1. Check unscoped affiliations
   for (const aff of unscopedAffs) {
     if (academicAffiliations.includes(aff.toLowerCase())) {
       debugAca('ACA granted via unscoped affiliation:', aff);
-      return true;
+      hasACA = true;
+      break;
     }
   }
 
@@ -135,7 +140,7 @@ function checkAcademicStatus(affiliations, scopedAffiliations, entitlements) {
   );
   if (hasClarinMember && hasClarinAcademicEntitlement) {
     debugAca('ACA granted via CLARIN special case');
-    return true;
+    hasACA = true;
   }
 
   // 3. Check other scoped affiliations (excluding CLARIN member@clarin.eu)
@@ -152,7 +157,14 @@ function checkAcademicStatus(affiliations, scopedAffiliations, entitlements) {
       // Pattern: role@domain (e.g., member@helsinki.fi, student@jyu.fi)
       if (lowerAff.startsWith(academicRole + '@')) {
         debugAca('ACA granted via scoped affiliation:', aff);
-        return true;
+        hasACA = true;
+
+        // Check if it's a Finnish academic affiliation (domain ends with .fi)
+        if (lowerAff.endsWith('.fi')) {
+          debugAca('ACA-Fi granted via Finnish scoped affiliation:', aff);
+          hasACAFi = true;
+        }
+        break;
       }
     }
   }
@@ -163,11 +175,19 @@ function checkAcademicStatus(affiliations, scopedAffiliations, entitlements) {
   );
   if (hasLbrAca) {
     debugAca('ACA granted via LBR entitlement');
-    return true;
+    hasACA = true;
   }
 
-  debugAca('ACA not granted');
-  return false;
+  // Build userClasses array
+  if (hasACA) {
+    userClasses.push('ACA');
+  }
+  if (hasACAFi) {
+    userClasses.push('ACA-Fi');
+  }
+
+  debugAca('User classes determined:', userClasses);
+  return userClasses;
 }
 
 /**
@@ -336,7 +356,7 @@ app.get('/logout', (req, res) => {
  * Development mode: Reads user from session cookie
  */
 app.get('/jwt', (req, res) => {
-  let userSub, userEmail, userName, entitlements, isAcademic;
+  let userSub, userEmail, userName, entitlements, userClasses;
 
   // PRODUCTION MODE: Read user from Apache OIDC headers
   if (config.isProduction) {
@@ -369,13 +389,13 @@ app.get('/jwt', (req, res) => {
     userName = oidcName || oidcEmail || oidcSub;
     entitlements = parseEntitlements(oidcEntitlements);
 
-    // Check academic status
-    isAcademic = checkAcademicStatus(oidcAffiliation, oidcScopedAffiliation, oidcEntitlements);
+    // Determine user classes (ACA, ACA-Fi, etc.)
+    userClasses = getUserClasses(oidcAffiliation, oidcScopedAffiliation, oidcEntitlements);
 
     debugAuth('Parsed entitlements:', entitlements);
-    debugAuth('Academic status (ACA):', isAcademic);
+    debugAuth('User classes:', userClasses);
 
-    logger.info(`Issuing JWT for user: ${userEmail || userSub} (${entitlements.length} entitlements, ACA: ${isAcademic})`, 'JWT');
+    logger.info(`Issuing JWT for user: ${userEmail || userSub} (${entitlements.length} entitlements, classes: ${JSON.stringify(userClasses)})`, 'JWT');
   }
   // DEVELOPMENT MODE: Read user from cookie
   else {
@@ -407,7 +427,7 @@ app.get('/jwt', (req, res) => {
       userEmail = username;
       userName = username;
       entitlements = []; // No entitlements in development mode
-      isAcademic = false; // No ACA status in development mode
+      userClasses = []; // No user classes in development mode
 
       logger.info(`Issuing JWT for user: ${username}`, 'JWT');
     } catch (error) {
@@ -427,8 +447,7 @@ app.get('/jwt', (req, res) => {
     email: userEmail,
     name: userName,
     idp: config.isProduction ? 'https://aai.kielipankki.fi' : 'kp-auth-local',
-    ACA: isAcademic,
-    "ACA-Fi": isAcademic && userSub.endsWith('.fi'),
+    userClasses: userClasses,
     scope: scope,
     levels: auth_db.PERMISSIONS,
     exp: Math.floor(Date.now() / 1000) + 3600, // 1 hour
