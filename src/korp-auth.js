@@ -102,14 +102,14 @@ function parseAffiliations(headerValue) {
  * 4. LBR ACA entitlement: urn:nbn:fi:lb-2016110710@LBR
  */
 function getUserClasses(affiliations, scopedAffiliations, entitlements) {
-  const debugAca = debug('korp-auth:aca');
+  const debugUserClass = debug('korp-auth:userclass');
 
   // Parse all inputs
   const unscopedAffs = parseAffiliations(affiliations);
   const scopedAffs = parseAffiliations(scopedAffiliations);
   const ents = parseEntitlements(entitlements);
 
-  debugAca('Checking user classes:', {
+  debugUserClass('Checking user classes:', {
     unscopedAffiliations: unscopedAffs,
     scopedAffiliations: scopedAffs,
     entitlements: ents
@@ -125,7 +125,7 @@ function getUserClasses(affiliations, scopedAffiliations, entitlements) {
   // 1. Check unscoped affiliations
   for (const aff of unscopedAffs) {
     if (academicAffiliations.includes(aff.toLowerCase())) {
-      debugAca('ACA granted via unscoped affiliation:', aff);
+      debugUserClass('ACA granted via unscoped affiliation:', aff);
       hasACA = true;
       break;
     }
@@ -139,7 +139,7 @@ function getUserClasses(affiliations, scopedAffiliations, entitlements) {
     ent === 'http://www.clarin.eu/entitlement/academic'
   );
   if (hasClarinMember && hasClarinAcademicEntitlement) {
-    debugAca('ACA granted via CLARIN special case');
+    debugUserClass('ACA granted via CLARIN special case');
     hasACA = true;
   }
 
@@ -156,12 +156,12 @@ function getUserClasses(affiliations, scopedAffiliations, entitlements) {
     for (const academicRole of academicAffiliations) {
       // Pattern: role@domain (e.g., member@helsinki.fi, student@jyu.fi)
       if (lowerAff.startsWith(academicRole + '@')) {
-        debugAca('ACA granted via scoped affiliation:', aff);
+        debugUserClass('ACA granted via scoped affiliation:', aff);
         hasACA = true;
 
         // Check if it's a Finnish academic affiliation (domain ends with .fi)
         if (lowerAff.endsWith('.fi')) {
-          debugAca('ACA-Fi granted via Finnish scoped affiliation:', aff);
+          debugUserClass('ACA-Fi granted via Finnish scoped affiliation:', aff);
           hasACAFi = true;
         }
         break;
@@ -174,7 +174,7 @@ function getUserClasses(affiliations, scopedAffiliations, entitlements) {
     ent === 'urn:nbn:fi:lb-2016110710@LBR'
   );
   if (hasLbrAca) {
-    debugAca('ACA granted via LBR entitlement');
+    debugUserClass('ACA granted via LBR entitlement');
     hasACA = true;
   }
 
@@ -186,7 +186,7 @@ function getUserClasses(affiliations, scopedAffiliations, entitlements) {
     userClasses.push('ACA-Fi');
   }
 
-  debugAca('User classes determined:', userClasses);
+  debugUserClass('User classes determined:', userClasses);
   return userClasses;
 }
 
