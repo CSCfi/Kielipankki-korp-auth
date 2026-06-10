@@ -459,6 +459,10 @@ app.get('/jwt', (req, res) => {
 
   const token = jwt.sign(jwtPayload, JWT_SECRET, { algorithm: 'RS256' });
 
+  // Never let the browser (or any intermediary) cache an auth token. A cached
+  // /jwt response serves a token minted before the corpus grant existed, so a
+  // freshly installed corpus reads as "no permission" until a hard refresh.
+  res.set('Cache-Control', 'no-store');
   res.send(token);
 });
 
