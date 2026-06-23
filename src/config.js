@@ -45,4 +45,23 @@ const config = {
   demoUsers: process.env.DEMO_USERS ? JSON.parse(process.env.DEMO_USERS) : {}
 };
 
+// The API keys are the only thing guarding the resource-management endpoints.
+// An empty key fails open: the comparison `authHeader !== "apikey " + KEY`
+// (see korp-auth.js) is satisfied by the literal header `Authorization: apikey `
+// when the key is "". Refuse to start in production unless both keys are present
+// and long enough to not be trivially guessable. Enforced only in production so
+// local/dev and the dev-mode test suite need not set them.
+if (config.isProduction) {
+  const MIN_API_KEY_LENGTH = 12;
+  for (const [name, value] of [['MINK_API_KEY', config.minkApiKey],
+                               ['ADMIN_API_KEY', config.adminApiKey]]) {
+    if (!value || value.length < MIN_API_KEY_LENGTH) {
+      throw new Error(
+        `${name} must be set and at least ${MIN_API_KEY_LENGTH} characters in production ` +
+        `(got ${value ? value.length : 0}). Generate one with: openssl rand -hex 32`
+      );
+    }
+  }
+}
+
 module.exports = config;
